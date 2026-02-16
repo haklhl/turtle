@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+*.egg
+dist/
+build/
+.eggs/
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Sea Turtle runtime data
+agents/*/memory.md
+agents/*/.shell_history
+agents/*/task.md
+!agents/default/rules.md
+!agents/default/skills.md
+
+# Config with secrets
+config.json
+.env
+
+# Logs
+*.log
+logs/
+token_usage.json

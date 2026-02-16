@@ -1,0 +1,93 @@
+{
+  "version": "1.0",
+  "global": {
+    "log_level": "info",
+    "log_file": "~/.sea_turtle/logs/daemon.log",
+    "data_dir": "~/.sea_turtle",
+    "default_agent": "default",
+    "pid_file": "~/.sea_turtle/daemon.pid",
+    "socket_path": "~/.sea_turtle/daemon.sock"
+  },
+  "llm": {
+    "default_provider": "google",
+    "default_model": "gemini-2.5-flash",
+    "temperature": 0.7,
+    "max_output_tokens": 8192,
+    "providers": {
+      "google": {
+        "api_key_env": "GOOGLE_API_KEY"
+      },
+      "openai": {
+        "api_key_env": "OPENAI_API_KEY"
+      },
+      "anthropic": {
+        "api_key_env": "ANTHROPIC_API_KEY"
+      },
+      "openrouter": {
+        "api_key_env": "OPENROUTER_API_KEY"
+      },
+      "xai": {
+        "api_key_env": "XAI_API_KEY"
+      }
+    }
+  },
+  "context": {
+    "max_tokens": 200000,
+    "compress_threshold_ratio": 0.7,
+    "compress_target_ratio": 0.3,
+    "compress_model": "gemini-2.0-flash"
+  },
+  "shell": {
+    "enabled": true,
+    "timeout_seconds": 30,
+    "max_output_chars": 10000,
+    "dangerous_commands": ["rm", "rmdir", "chmod", "chown", "sudo", "shutdown", "reboot", "kill", "mkfs", "dd"],
+    "blocked_commands": ["rm -rf /"],
+    "history_max_entries": 10000,
+    "history_max_file_size_mb": 50,
+    "history_record_output": true,
+    "history_output_max_chars": 500
+  },
+  "telegram": {
+    "enabled": true,
+    "bot_token_env": "TELEGRAM_BOT_TOKEN",
+    "allowed_user_ids": []
+  },
+  "discord": {
+    "enabled": false,
+    "bot_token_env": "DISCORD_BOT_TOKEN",
+    "allowed_user_ids": []
+  },
+  "heartbeat": {
+    "enabled": true,
+    "interval_seconds": 300
+  },
+  "token_billing": {
+    "enabled": true,
+    "log_file": "token_usage.json"
+  },
+  "logging": {
+    "level": "info",
+    "max_file_size_mb": 10,
+    "backup_count": 3,
+    "format": "[{asctime}] [{levelname}] [{name}] {message}"
+  },
+  "agents": {
+    "default": {
+      "name": "Turtle",
+      "human_name": "Human",
+      "workspace": "./agents/default",
+      "model": "gemini-2.5-flash",
+      "tools": ["shell", "memory", "task"],
+      "sandbox": "confined",
+      "telegram": {
+        "bot_token_env": "TELEGRAM_BOT_TOKEN",
+        "allowed_user_ids": []
+      },
+      "discord": {
+        "bot_token_env": "DISCORD_BOT_TOKEN",
+        "allowed_user_ids": []
+      }
+    }
+  }
+}

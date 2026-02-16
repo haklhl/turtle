@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sea-turtle"
+version = "0.1.0"
+description = "🐢 Sea Turtle — A lightweight, self-hosted personal AI agent system"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.11"
+authors = [
+    {name = "haklhl", email = "haklhl@users.noreply.github.com"},
+]
+keywords = ["ai", "agent", "llm", "telegram", "discord", "gemini", "personal-assistant"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "google-genai>=1.0.0",
+    "openai>=1.0.0",
+    "anthropic>=0.30.0",
+    "python-telegram-bot>=21.0",
+    "discord.py>=2.3.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/haklhl/turtle"
+Repository = "https://github.com/haklhl/turtle"
+Issues = "https://github.com/haklhl/turtle/issues"
+
+[project.scripts]
+seaturtle = "sea_turtle.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["sea_turtle*"]
