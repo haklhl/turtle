@@ -325,25 +325,26 @@ class Daemon:
         source = msg.get("source", "")
         content = msg.get("content", "")
         chat_id = msg.get("chat_id")
+        agent_id = msg.get("agent_id", "default")
 
         if source == "telegram":
-            await self._send_telegram_reply(chat_id, content)
+            await self._send_telegram_reply(chat_id, content, agent_id)
         elif source == "discord":
-            await self._send_discord_reply(chat_id, content)
+            await self._send_discord_reply(chat_id, content, agent_id)
         else:
             logger.debug(f"Reply to {source}: {content[:100]}")
 
-    async def _send_telegram_reply(self, chat_id, content):
+    async def _send_telegram_reply(self, chat_id, content, agent_id: str):
         """Send reply via Telegram."""
         if self._telegram_channel:
-            await self._telegram_channel.send_message(chat_id, content)
+            await self._telegram_channel.send_message(chat_id, content, agent_id)
         else:
             logger.warning(f"Telegram channel not available, cannot send reply to {chat_id}")
 
-    async def _send_discord_reply(self, chat_id, content):
+    async def _send_discord_reply(self, chat_id, content, agent_id: str):
         """Send reply via Discord."""
         if self._discord_channel:
-            await self._discord_channel.send_message(chat_id, content)
+            await self._discord_channel.send_message(chat_id, content, agent_id)
         else:
             logger.warning(f"Discord channel not available, cannot send reply to {chat_id}")
 
