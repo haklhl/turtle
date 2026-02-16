@@ -128,24 +128,33 @@ class DiscordChannel(BaseChannel):
 
         @bot.event
         async def on_message(message: discord.Message):
+            print(f"[Discord] on_message from {message.author}: {message.content[:50]}", flush=True)
             if message.author == bot.user:
+                print(f"[Discord] Ignoring own message", flush=True)
                 return
             if message.author.bot:
+                print(f"[Discord] Ignoring bot message", flush=True)
                 return
 
             user_id = message.author.id
             chat_id = message.channel.id
             guild_id = message.guild.id if message.guild else 0
+            print(f"[Discord] user_id={user_id}, chat_id={chat_id}, guild_id={guild_id}", flush=True)
 
             # Check guild/channel allowlist
             if guild_id and not channel._is_guild_allowed(guild_id, dc_cfg):
+                print(f"[Discord] Guild {guild_id} not allowed", flush=True)
                 return
             if not channel._is_channel_allowed(chat_id, dc_cfg):
+                print(f"[Discord] Channel {chat_id} not allowed", flush=True)
                 return
 
             # Check if should respond (mentions only mode)
             if not channel._should_respond(message, bot, dc_cfg):
+                print(f"[Discord] Not responding (mentions_only mode, bot not mentioned)", flush=True)
                 return
+            
+            print(f"[Discord] Processing message...", flush=True)
 
             # Add 👀 reaction to show message was seen
             try:
