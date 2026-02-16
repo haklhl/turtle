@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from sea_turtle.config.loader import load_config, get_agent_config
+from sea_turtle.config.loader import load_config, get_agent_config, save_config
 from sea_turtle.core.agent import AgentManager
 from sea_turtle.core.heartbeat import Heartbeat
 from sea_turtle.core.token_counter import TokenCounter
@@ -31,8 +31,9 @@ class Daemon:
     - Serve CLI commands via Unix socket
     """
 
-    def __init__(self, config: dict):
+    def __init__(self, config: dict, config_path: str | None = None):
         self.config = config
+        self.config_path = config_path
         self.agent_manager = AgentManager(config)
         self.heartbeats: dict[str, Heartbeat] = {}
         self._running = False
@@ -241,6 +242,14 @@ class Daemon:
                 handle = self.agent_manager.get_handle(agent_id)
                 if handle and handle.is_alive:
                     self.agent_manager.send_message(agent_id, {"type": "set_model", "model": new_model})
+                    # Persist to config file
+                    if self.config_path and agent_id in self.config.get("agents", {}):
+                        self.config["agents"][agent_id]["model"] = new_model
+                        try:
+                            save_config(self.config, self.config_path)
+                            logger.info(f"Model for '{agent_id}' saved to config: {new_model}")
+                        except Exception as e:
+                            logger.error(f"Failed to save config: {e}")
                     return f"✅ Model switched to: {new_model}"
                 return "⚠️ Agent is not running."
             else:
@@ -407,6 +416,8 @@ class Daemon:
 
 def run_daemon(config_path: str | None = None) -> None:
     """Entry point to run the daemon."""
+    from sea_turtle.config.loader import find_config_file
+    resolved_path = find_config_file(config_path)
     config = load_config(config_path)
-    daemon = Daemon(config)
+    daemon = Daemon(config, config_path=resolved_path)
     asyncio.run(daemon.start())
