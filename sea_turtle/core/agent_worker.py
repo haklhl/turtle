@@ -308,7 +308,7 @@ class AgentWorker:
                     new_model = msg.get("model", "")
                     self.model = new_model
                     self.llm = None  # Force re-creation
-                    self.context.add_message("system", f"[System] Model switched to: {new_model}. You are now running as {new_model}.")
+                    self.context.add_message("assistant", f"[Model switched to {new_model}]")
                     self.logger.info(f"Model changed to: {new_model}")
 
                 elif msg_type == "reset_context":
