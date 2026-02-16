@@ -281,21 +281,24 @@ class AgentWorker:
                     self.logger.info(f"Processing message from {source}: {user_text[:100]}...")
 
                     try:
+                        self.logger.info(f"Calling LLM for message from {source}...")
                         reply = await self._process_message(user_text)
+                        self.logger.info(f"LLM reply received ({len(reply) if reply else 0} chars), sending to outbox")
                         self.outbox.put({
                             "type": "reply",
                             "agent_id": self.agent_id,
-                            "content": reply,
+                            "content": reply or "(empty response)",
                             "source": source,
                             "chat_id": msg.get("chat_id"),
                             "user_id": msg.get("user_id"),
                         })
+                        self.logger.info(f"Reply queued to outbox for {source}:{msg.get('chat_id')}")
                     except Exception as e:
                         self.logger.error(f"Error processing message: {e}", exc_info=True)
                         self.outbox.put({
-                            "type": "error",
+                            "type": "reply",
                             "agent_id": self.agent_id,
-                            "content": f"Error: {e}",
+                            "content": f"❌ Error: {e}",
                             "source": source,
                             "chat_id": msg.get("chat_id"),
                             "user_id": msg.get("user_id"),
