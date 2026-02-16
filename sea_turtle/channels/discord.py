@@ -34,6 +34,7 @@ class DiscordChannel(BaseChannel):
         super().__init__(config, daemon)
         self.bots: dict[str, commands.Bot] = {}
         self._agent_configs: dict[str, dict] = {}
+        self._bot_tasks: list[asyncio.Task] = []
 
     async def start(self) -> None:
         """Start Discord bot(s) for all configured agents."""
@@ -64,7 +65,12 @@ class DiscordChannel(BaseChannel):
             self.bots[agent_id] = bot
 
             # Start bot in background
-            asyncio.create_task(self._run_bot(bot, token, agent_id))
+            task = asyncio.create_task(self._run_bot(bot, token, agent_id))
+            self._bot_tasks.append(task)
+
+        # Give bots a moment to start connecting
+        if self._bot_tasks:
+            await asyncio.sleep(0.5)
 
     async def _run_bot(self, bot: commands.Bot, token: str, agent_id: str) -> None:
         """Run a Discord bot."""
