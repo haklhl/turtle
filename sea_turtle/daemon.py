@@ -39,6 +39,8 @@ class Daemon:
         self._reply_task: asyncio.Task | None = None
         self._health_task: asyncio.Task | None = None
         self._channel_tasks: list[asyncio.Task] = []
+        self._telegram_channel = None
+        self._discord_channel = None
 
         global logger
         logger = get_daemon_logger(config)
@@ -96,6 +98,16 @@ class Daemon:
         logger.info("Sea Turtle daemon stopping...")
 
         # Stop channels
+        if self._telegram_channel:
+            try:
+                await self._telegram_channel.stop()
+            except Exception as e:
+                logger.error(f"Error stopping Telegram channel: {e}")
+        if self._discord_channel:
+            try:
+                await self._discord_channel.stop()
+            except Exception as e:
+                logger.error(f"Error stopping Discord channel: {e}")
         for task in self._channel_tasks:
             task.cancel()
 
@@ -309,13 +321,18 @@ class Daemon:
             logger.debug(f"Reply to {source}: {content[:100]}")
 
     async def _send_telegram_reply(self, chat_id, content):
-        """Send reply via Telegram. Implemented by TelegramChannel."""
-        # This will be called by the channel's reply mechanism
-        pass
+        """Send reply via Telegram."""
+        if self._telegram_channel:
+            await self._telegram_channel.send_message(chat_id, content)
+        else:
+            logger.warning(f"Telegram channel not available, cannot send reply to {chat_id}")
 
     async def _send_discord_reply(self, chat_id, content):
-        """Send reply via Discord. Implemented by DiscordChannel."""
-        pass
+        """Send reply via Discord."""
+        if self._discord_channel:
+            await self._discord_channel.send_message(chat_id, content)
+        else:
+            logger.warning(f"Discord channel not available, cannot send reply to {chat_id}")
 
     async def _health_monitor(self) -> None:
         """Periodically check agent health and recover crashed agents."""
@@ -341,23 +358,23 @@ class Daemon:
         if self.config.get("telegram", {}).get("enabled", False):
             try:
                 from sea_turtle.channels.telegram import TelegramChannel
-                tg = TelegramChannel(self.config, self)
-                task = asyncio.create_task(tg.start())
-                self._channel_tasks.append(task)
+                self._telegram_channel = TelegramChannel(self.config, self)
+                await self._telegram_channel.start()
                 logger.info("Telegram channel started")
             except Exception as e:
-                logger.error(f"Failed to start Telegram channel: {e}")
+                logger.error(f"Failed to start Telegram channel: {e}", exc_info=True)
+                self._telegram_channel = None
 
         # Discord
         if self.config.get("discord", {}).get("enabled", False):
             try:
                 from sea_turtle.channels.discord import DiscordChannel
-                dc = DiscordChannel(self.config, self)
-                task = asyncio.create_task(dc.start())
-                self._channel_tasks.append(task)
+                self._discord_channel = DiscordChannel(self.config, self)
+                await self._discord_channel.start()
                 logger.info("Discord channel started")
             except Exception as e:
-                logger.error(f"Failed to start Discord channel: {e}")
+                logger.error(f"Failed to start Discord channel: {e}", exc_info=True)
+                self._discord_channel = None
 
     def _write_pid(self) -> None:
         """Write daemon PID to file."""
