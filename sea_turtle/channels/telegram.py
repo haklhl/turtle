@@ -104,9 +104,6 @@ class TelegramChannel(BaseChannel):
 
             logger.info(f"Telegram bot started for agent '{agent_id}'")
 
-        # Start reply dispatcher for Telegram
-        asyncio.create_task(self._reply_dispatcher())
-
     async def stop(self) -> None:
         """Stop all Telegram bots."""
         for agent_id, app in self.applications.items():
@@ -198,20 +195,3 @@ class TelegramChannel(BaseChannel):
 
         return handler
 
-    async def _reply_dispatcher(self) -> None:
-        """Poll agent outboxes and send replies via Telegram."""
-        while True:
-            for agent_id in list(self.applications.keys()):
-                handle = self.daemon.agent_manager.get_handle(agent_id)
-                if not handle:
-                    continue
-                try:
-                    msg = handle.outbox.get_nowait()
-                    if msg and msg.get("source") == "telegram":
-                        chat_id = msg.get("chat_id")
-                        content = msg.get("content", "")
-                        if chat_id and content:
-                            await self.send_message(chat_id, content, agent_id)
-                except Exception:
-                    pass
-            await asyncio.sleep(0.2)

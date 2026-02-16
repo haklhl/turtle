@@ -297,12 +297,19 @@ class Daemon:
 
     async def _dispatch_replies(self) -> None:
         """Dispatch replies from agent outboxes to the appropriate channels."""
+        import queue as _queue
         while self._running:
             for agent_id, handle in self.agent_manager.agents.items():
                 try:
                     msg = handle.outbox.get_nowait()
-                    if not msg:
-                        continue
+                except _queue.Empty:
+                    continue
+                except Exception as e:
+                    logger.error(f"Error reading outbox for '{agent_id}': {e}")
+                    continue
+                if not msg:
+                    continue
+                try:
                     # Route stats responses to pending futures
                     req_id = msg.get("request_id")
                     if req_id and req_id in self._pending_requests:
@@ -311,9 +318,10 @@ class Daemon:
                             future.set_result(msg)
                         continue
                     # Regular replies go to channels
+                    logger.debug(f"Dispatching reply from '{agent_id}' to {msg.get('source')}:{msg.get('chat_id')}")
                     await self._send_reply(msg)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.error(f"Error dispatching reply: {e}", exc_info=True)
             await asyncio.sleep(0.1)
 
     async def _send_reply(self, msg: dict) -> None:
