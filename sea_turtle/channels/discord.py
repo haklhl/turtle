@@ -129,8 +129,8 @@ class DiscordChannel(BaseChannel):
 
         @bot.event
         async def on_ready():
-            print(f"[Discord] Bot for '{agent_id}' connected as {bot.user}", flush=True)
-            logger.info(f"Discord bot for agent '{agent_id}' connected as {bot.user}")
+            print(f"[Discord] Bot for '{agent_id}' connected as {bot.user} (ID: {bot.user.id})", flush=True)
+            logger.info(f"Discord bot for agent '{agent_id}' connected as {bot.user} (ID: {bot.user.id})")
             # Sync slash commands
             try:
                 synced = await bot.tree.sync()
