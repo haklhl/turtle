@@ -116,10 +116,12 @@ class DiscordChannel(BaseChannel):
 
         @bot.event
         async def on_ready():
+            print(f"[Discord] Bot for '{agent_id}' connected as {bot.user}", flush=True)
             logger.info(f"Discord bot for agent '{agent_id}' connected as {bot.user}")
             # Sync slash commands
             try:
                 synced = await bot.tree.sync()
+                print(f"[Discord] Synced {len(synced)} slash commands for '{agent_id}'", flush=True)
                 logger.info(f"Synced {len(synced)} slash commands for '{agent_id}'")
             except Exception as e:
                 logger.error(f"Failed to sync slash commands: {e}")
