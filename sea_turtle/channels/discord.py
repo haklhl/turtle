@@ -74,10 +74,12 @@ class DiscordChannel(BaseChannel):
 
     async def _run_bot(self, bot: commands.Bot, token: str, agent_id: str) -> None:
         """Run a Discord bot."""
+        print(f"[Discord] Starting bot for agent '{agent_id}'...", flush=True)
         logger.info(f"Starting Discord bot for agent '{agent_id}'...")
         try:
             await bot.start(token)
         except Exception as e:
+            print(f"[Discord] Bot for agent '{agent_id}' failed: {e}", flush=True)
             logger.error(f"Discord bot for agent '{agent_id}' failed: {e}", exc_info=True)
 
     def _is_guild_allowed(self, guild_id: int, dc_cfg: dict) -> bool:
