@@ -131,11 +131,15 @@ class ContextManager:
         Returns:
             Dict with token count, message count, capacity info.
         """
+        system_tokens = self._estimate_tokens(self.system_prompt)
+        total_tokens = self._estimated_tokens + system_tokens
         return {
             "message_count": len(self.messages),
-            "estimated_tokens": self._estimated_tokens,
+            "system_prompt_tokens": system_tokens,
+            "message_tokens": self._estimated_tokens,
+            "estimated_tokens": total_tokens,
             "max_tokens": self.max_tokens,
-            "usage_ratio": self._estimated_tokens / self.max_tokens if self.max_tokens > 0 else 0,
+            "usage_ratio": total_tokens / self.max_tokens if self.max_tokens > 0 else 0,
             "compression_count": self._compression_count,
             "needs_compression": self.needs_compression(),
         }

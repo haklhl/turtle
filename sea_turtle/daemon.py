@@ -188,18 +188,14 @@ class Daemon:
                     resp = await asyncio.wait_for(future, timeout=10.0)
                     data = resp["data"]
                     ctx = data.get("context", {})
-                    usage = data.get("token_usage", {})
                     return (
                         f"📊 Context Stats:\n"
+                        f"  Model: {data.get('model', '?')}\n"
                         f"  Messages: {ctx.get('message_count', 0)}\n"
-                        f"  Tokens: ~{ctx.get('estimated_tokens', 0):,} / {ctx.get('max_tokens', 0):,}\n"
-                        f"  Usage: {ctx.get('usage_ratio', 0):.1%}\n"
-                        f"  Compressions: {ctx.get('compression_count', 0)}\n"
-                        f"  Model: {data.get('model', '?')}\n\n"
-                        f"💰 Session Usage:\n"
-                        f"  Requests: {usage.get('requests', 0)}\n"
-                        f"  Tokens: {usage.get('input_tokens', 0):,} in + {usage.get('output_tokens', 0):,} out\n"
-                        f"  Cost: ${usage.get('cost_usd', 0):.4f}"
+                        f"  System Prompt: ~{ctx.get('system_prompt_tokens', 0):,} tokens\n"
+                        f"  Conversation: ~{ctx.get('message_tokens', 0):,} tokens\n"
+                        f"  Total: ~{ctx.get('estimated_tokens', 0):,} / {ctx.get('max_tokens', 0):,} ({ctx.get('usage_ratio', 0):.1%})\n"
+                        f"  Compressions: {ctx.get('compression_count', 0)}"
                     )
                 except asyncio.TimeoutError:
                     return "⚠️ Timeout waiting for stats."
