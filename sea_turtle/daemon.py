@@ -41,6 +41,7 @@ class Daemon:
         self._channel_tasks: list[asyncio.Task] = []
         self._telegram_channel = None
         self._discord_channel = None
+        self._pending_requests: dict[str, asyncio.Future] = {}
 
         global logger
         logger = get_daemon_logger(config)
@@ -180,31 +181,30 @@ class Daemon:
             if handle and handle.is_alive:
                 import uuid
                 req_id = str(uuid.uuid4())
+                future = asyncio.get_event_loop().create_future()
+                self._pending_requests[req_id] = future
                 self.agent_manager.send_message(agent_id, {"type": "get_stats", "request_id": req_id})
-                # Wait for stats response
-                for _ in range(50):  # 5 second timeout
-                    await asyncio.sleep(0.1)
-                    try:
-                        resp = handle.outbox.get_nowait()
-                        if resp.get("type") == "stats" and resp.get("request_id") == req_id:
-                            data = resp["data"]
-                            ctx = data.get("context", {})
-                            usage = data.get("token_usage", {})
-                            return (
-                                f"📊 Context Stats:\n"
-                                f"  Messages: {ctx.get('message_count', 0)}\n"
-                                f"  Tokens: ~{ctx.get('estimated_tokens', 0):,} / {ctx.get('max_tokens', 0):,}\n"
-                                f"  Usage: {ctx.get('usage_ratio', 0):.1%}\n"
-                                f"  Compressions: {ctx.get('compression_count', 0)}\n"
-                                f"  Model: {data.get('model', '?')}\n\n"
-                                f"💰 Session Usage:\n"
-                                f"  Requests: {usage.get('requests', 0)}\n"
-                                f"  Tokens: {usage.get('input_tokens', 0):,} in + {usage.get('output_tokens', 0):,} out\n"
-                                f"  Cost: ${usage.get('cost_usd', 0):.4f}"
-                            )
-                    except Exception:
-                        continue
-                return "⚠️ Timeout waiting for stats."
+                try:
+                    resp = await asyncio.wait_for(future, timeout=10.0)
+                    data = resp["data"]
+                    ctx = data.get("context", {})
+                    usage = data.get("token_usage", {})
+                    return (
+                        f"📊 Context Stats:\n"
+                        f"  Messages: {ctx.get('message_count', 0)}\n"
+                        f"  Tokens: ~{ctx.get('estimated_tokens', 0):,} / {ctx.get('max_tokens', 0):,}\n"
+                        f"  Usage: {ctx.get('usage_ratio', 0):.1%}\n"
+                        f"  Compressions: {ctx.get('compression_count', 0)}\n"
+                        f"  Model: {data.get('model', '?')}\n\n"
+                        f"💰 Session Usage:\n"
+                        f"  Requests: {usage.get('requests', 0)}\n"
+                        f"  Tokens: {usage.get('input_tokens', 0):,} in + {usage.get('output_tokens', 0):,} out\n"
+                        f"  Cost: ${usage.get('cost_usd', 0):.4f}"
+                    )
+                except asyncio.TimeoutError:
+                    return "⚠️ Timeout waiting for stats."
+                finally:
+                    self._pending_requests.pop(req_id, None)
             return "⚠️ Agent is not running."
 
         elif cmd == "/restart":
@@ -301,8 +301,17 @@ class Daemon:
             for agent_id, handle in self.agent_manager.agents.items():
                 try:
                     msg = handle.outbox.get_nowait()
-                    if msg:
-                        await self._send_reply(msg)
+                    if not msg:
+                        continue
+                    # Route stats responses to pending futures
+                    req_id = msg.get("request_id")
+                    if req_id and req_id in self._pending_requests:
+                        future = self._pending_requests[req_id]
+                        if not future.done():
+                            future.set_result(msg)
+                        continue
+                    # Regular replies go to channels
+                    await self._send_reply(msg)
                 except Exception:
                     pass
             await asyncio.sleep(0.1)
