@@ -33,13 +33,11 @@ class DiscordChannel(BaseChannel):
 
         for agent_id, agent_cfg in self.config.get("agents", {}).items():
             dc_cfg = agent_cfg.get("discord", {})
-            token_env = dc_cfg.get("bot_token_env", "")
-            if not token_env:
-                continue
 
-            token = os.environ.get(token_env, "")
+            from sea_turtle.config.loader import resolve_secret
+            token = resolve_secret(dc_cfg, "bot_token", "bot_token_env")
             if not token:
-                logger.warning(f"Discord token env '{token_env}' not set for agent '{agent_id}', skipping.")
+                logger.debug(f"No Discord token for agent '{agent_id}', skipping.")
                 continue
 
             if token in seen_tokens:

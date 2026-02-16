@@ -84,14 +84,18 @@ ALL_TOOLS = {
 
 def _create_llm_provider(config: dict, model: str) -> BaseLLMProvider:
     """Create the appropriate LLM provider based on model name and config."""
+    from sea_turtle.config.loader import resolve_secret
+
     provider_name = resolve_provider(model, config.get("llm", {}).get("default_provider", "google"))
     providers_cfg = config.get("llm", {}).get("providers", {})
     provider_cfg = providers_cfg.get(provider_name, {})
-    api_key_env = provider_cfg.get("api_key_env", "")
-    api_key = os.environ.get(api_key_env, "")
+    api_key = resolve_secret(provider_cfg, "api_key", "api_key_env")
 
     if not api_key:
-        raise ValueError(f"API key not found for provider '{provider_name}' (env: {api_key_env})")
+        raise ValueError(
+            f"API key not found for provider '{provider_name}'. "
+            f"Set 'api_key' in config.json or env var '{provider_cfg.get('api_key_env', '')}'."
+        )
 
     if provider_name == "google":
         from sea_turtle.llm.google import GoogleProvider

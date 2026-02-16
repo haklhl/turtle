@@ -22,11 +22,11 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "temperature": 0.7,
         "max_output_tokens": 8192,
         "providers": {
-            "google": {"api_key_env": "GOOGLE_API_KEY"},
-            "openai": {"api_key_env": "OPENAI_API_KEY"},
-            "anthropic": {"api_key_env": "ANTHROPIC_API_KEY"},
-            "openrouter": {"api_key_env": "OPENROUTER_API_KEY"},
-            "xai": {"api_key_env": "XAI_API_KEY"},
+            "google": {"api_key": "", "api_key_env": "GOOGLE_API_KEY"},
+            "openai": {"api_key": "", "api_key_env": "OPENAI_API_KEY"},
+            "anthropic": {"api_key": "", "api_key_env": "ANTHROPIC_API_KEY"},
+            "openrouter": {"api_key": "", "api_key_env": "OPENROUTER_API_KEY"},
+            "xai": {"api_key": "", "api_key_env": "XAI_API_KEY"},
         },
     },
     "context": {
@@ -51,11 +51,13 @@ DEFAULT_CONFIG: dict[str, Any] = {
     },
     "telegram": {
         "enabled": False,
+        "bot_token": "",
         "bot_token_env": "TELEGRAM_BOT_TOKEN",
         "allowed_user_ids": [],
     },
     "discord": {
         "enabled": False,
+        "bot_token": "",
         "bot_token_env": "DISCORD_BOT_TOKEN",
         "allowed_user_ids": [],
     },
@@ -82,10 +84,12 @@ DEFAULT_CONFIG: dict[str, Any] = {
             "tools": ["shell", "memory", "task"],
             "sandbox": "confined",
             "telegram": {
+                "bot_token": "",
                 "bot_token_env": "TELEGRAM_BOT_TOKEN",
                 "allowed_user_ids": [],
             },
             "discord": {
+                "bot_token": "",
                 "bot_token_env": "DISCORD_BOT_TOKEN",
                 "allowed_user_ids": [],
             },
@@ -215,13 +219,38 @@ def validate_config(config: dict) -> list[str]:
         issues.append(f"WARNING: Default LLM provider '{default_provider}' not configured.")
 
     for provider_name, provider_cfg in providers.items():
-        api_key_env = provider_cfg.get("api_key_env", "")
-        if api_key_env and not os.environ.get(api_key_env):
+        resolved = resolve_secret(provider_cfg, "api_key", "api_key_env")
+        if not resolved:
             issues.append(
-                f"WARNING: Provider '{provider_name}' API key env '{api_key_env}' is not set."
+                f"WARNING: Provider '{provider_name}' has no API key configured "
+                f"(set 'api_key' in config or env var '{provider_cfg.get('api_key_env', '')}')."
             )
 
     return issues
+
+
+def resolve_secret(cfg: dict, key: str = "api_key", env_key: str = "api_key_env") -> str:
+    """Resolve a secret value: prefer direct value in config, fallback to env var.
+
+    Args:
+        cfg: Config dict containing the key and env_key fields.
+        key: Field name for the direct value (e.g. 'api_key', 'bot_token').
+        env_key: Field name for the env variable name (e.g. 'api_key_env', 'bot_token_env').
+
+    Returns:
+        Resolved secret string, or empty string if not found.
+    """
+    # Priority 1: direct value in config
+    direct = cfg.get(key, "")
+    if direct:
+        return direct
+
+    # Priority 2: environment variable
+    env_name = cfg.get(env_key, "")
+    if env_name:
+        return os.environ.get(env_name, "")
+
+    return ""
 
 
 def get_agent_config(config: dict, agent_id: str) -> dict | None:

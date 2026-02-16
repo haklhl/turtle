@@ -15,18 +15,23 @@
     "max_output_tokens": 8192,
     "providers": {
       "google": {
+        "api_key": "your-google-api-key-here",
         "api_key_env": "GOOGLE_API_KEY"
       },
       "openai": {
+        "api_key": "",
         "api_key_env": "OPENAI_API_KEY"
       },
       "anthropic": {
+        "api_key": "",
         "api_key_env": "ANTHROPIC_API_KEY"
       },
       "openrouter": {
+        "api_key": "",
         "api_key_env": "OPENROUTER_API_KEY"
       },
       "xai": {
+        "api_key": "",
         "api_key_env": "XAI_API_KEY"
       }
     }
@@ -50,11 +55,13 @@
   },
   "telegram": {
     "enabled": true,
+    "bot_token": "your-telegram-bot-token-here",
     "bot_token_env": "TELEGRAM_BOT_TOKEN",
     "allowed_user_ids": []
   },
   "discord": {
     "enabled": false,
+    "bot_token": "",
     "bot_token_env": "DISCORD_BOT_TOKEN",
     "allowed_user_ids": []
   },
@@ -81,10 +88,12 @@
       "tools": ["shell", "memory", "task"],
       "sandbox": "confined",
       "telegram": {
+        "bot_token": "your-telegram-bot-token-here",
         "bot_token_env": "TELEGRAM_BOT_TOKEN",
         "allowed_user_ids": []
       },
       "discord": {
+        "bot_token": "",
         "bot_token_env": "DISCORD_BOT_TOKEN",
         "allowed_user_ids": []
       }
