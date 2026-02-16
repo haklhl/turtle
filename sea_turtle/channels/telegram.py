@@ -5,7 +5,7 @@ import logging
 import os
 from typing import Any, TYPE_CHECKING
 
-from telegram import Update
+from telegram import BotCommand, Update
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -20,6 +20,18 @@ if TYPE_CHECKING:
     from sea_turtle.daemon import Daemon
 
 logger = logging.getLogger("sea_turtle.channels.telegram")
+
+BOT_COMMANDS = [
+    BotCommand("start", "🐢 启动 / 欢迎信息"),
+    BotCommand("help", "📖 显示帮助"),
+    BotCommand("reset", "🔄 重置对话上下文"),
+    BotCommand("context", "📊 查看上下文用量"),
+    BotCommand("usage", "💰 查看 Token 用量与费用"),
+    BotCommand("status", "📋 查看 Agent 状态"),
+    BotCommand("model", "🤖 查看/切换模型 (如 /model gpt-4o)"),
+    BotCommand("agent", "🔀 切换 Agent (如 /agent dev)"),
+    BotCommand("restart", "♻️ 重启当前 Agent"),
+]
 
 
 class TelegramChannel(BaseChannel):
@@ -82,6 +94,13 @@ class TelegramChannel(BaseChannel):
             await app.initialize()
             await app.start()
             await app.updater.start_polling(drop_pending_updates=True)
+
+            # Register command menu
+            try:
+                await app.bot.set_my_commands(BOT_COMMANDS)
+                logger.info(f"Telegram command menu registered for agent '{agent_id}'")
+            except Exception as e:
+                logger.warning(f"Failed to set command menu for '{agent_id}': {e}")
 
             logger.info(f"Telegram bot started for agent '{agent_id}'")
 
