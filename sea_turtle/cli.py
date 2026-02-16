@@ -535,30 +535,25 @@ def cmd_onboard(args):
 
 def cmd_update(args):
     """Check for and install updates."""
-    from sea_turtle.updater.github import check_update, install_update
+    from sea_turtle.updater.github import install_update
 
-    print(f"🐢 Current version: {__version__}")
-    print("Checking for updates...")
-
-    latest = check_update()
-    if latest is None:
-        print("⚠️ Could not check for updates.")
-        return
-
-    if latest == __version__:
-        print("✅ You are on the latest version.")
-        return
-
-    print(f"📦 New version available: {latest}")
+    print(f"🐢 Sea Turtle v{__version__}")
 
     if args.check:
-        print("Run 'seaturtle update' to install.")
+        from sea_turtle.updater.github import check_update
+        print("Checking GitHub for latest release...")
+        latest = check_update()
+        if latest is None:
+            print("⚠️ Could not check for updates.")
+        elif latest == __version__:
+            print("✅ You are on the latest release.")
+        else:
+            print(f"📦 New release available: {latest}")
         return
 
-    confirm = input("Install update? [y/N]: ").strip().lower()
-    if confirm == "y":
-        success = install_update()
-        if success:
-            print("✅ Update installed. Restart the daemon: seaturtle stop && seaturtle start")
-        else:
-            print("❌ Update failed.")
+    print("Updating (git pull + pip install -e .) ...")
+    success = install_update()
+    if success:
+        print("✅ Update complete. Restart daemon: seaturtle stop && seaturtle start")
+    else:
+        print("❌ Update failed. Check logs for details.")
