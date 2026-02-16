@@ -104,9 +104,22 @@ class DiscordChannel(BaseChannel):
 
         # Check if respond_to_mentions_only is enabled
         if dc_cfg.get("respond_to_mentions_only", True):
-            # Check if bot is mentioned
-            if bot.user not in message.mentions:
-                return False
+            # Check if bot is mentioned (user mention or role mention)
+            if bot.user in message.mentions:
+                return True
+            # Also check if bot user ID appears in content (for role mentions)
+            if bot.user and f"<@{bot.user.id}>" in message.content:
+                return True
+            if bot.user and f"<@!{bot.user.id}>" in message.content:
+                return True
+            # Check role mentions - if bot has any of the mentioned roles
+            if message.role_mentions and bot.user:
+                member = message.guild.get_member(bot.user.id) if message.guild else None
+                if member:
+                    for role in message.role_mentions:
+                        if role in member.roles:
+                            return True
+            return False
 
         return True
 
