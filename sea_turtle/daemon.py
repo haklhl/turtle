@@ -173,8 +173,8 @@ class Daemon:
         elif cmd == "/reset":
             handle = self.agent_manager.get_handle(agent_id)
             if handle and handle.is_alive:
-                self.agent_manager.send_message(agent_id, {"type": "reset_context"})
-                return "✅ Context reset."
+                self.agent_manager.send_message(agent_id, {"type": "reset_context", "source": source})
+                return f"✅ Context reset for {source}."
             return "⚠️ Agent is not running."
 
         elif cmd == "/context":
@@ -184,7 +184,7 @@ class Daemon:
                 req_id = str(uuid.uuid4())
                 future = asyncio.get_event_loop().create_future()
                 self._pending_requests[req_id] = future
-                self.agent_manager.send_message(agent_id, {"type": "get_stats", "request_id": req_id})
+                self.agent_manager.send_message(agent_id, {"type": "get_stats", "request_id": req_id, "source": source})
                 try:
                     resp = await asyncio.wait_for(future, timeout=10.0)
                     data = resp["data"]

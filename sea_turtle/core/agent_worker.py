@@ -137,7 +137,7 @@ class AgentWorker:
         self.model = self.agent_config.get("model", config.get("llm", {}).get("default_model", "gemini-2.5-flash"))
         self.workspace = str(Path(self.agent_config.get("workspace", f"./agents/{agent_id}")).resolve())
         self.logger = get_agent_logger(agent_id, config)
-        self.context = ContextManager(config)
+        self.contexts: dict[str, ContextManager] = {}  # Per-channel context isolation
         self.memory = MemoryManager(self.workspace)
         self.token_counter = TokenCounter(config, agent_id)
         self.shell = ShellExecutor(
@@ -146,6 +146,12 @@ class AgentWorker:
         )
         self.llm: BaseLLMProvider | None = None
         self._running = False
+
+    def _get_context(self, source: str) -> ContextManager:
+        """Get or create a ContextManager for a specific channel source."""
+        if source not in self.contexts:
+            self.contexts[source] = ContextManager(self.config)
+        return self.contexts[source]
 
     def _get_tools(self) -> list[ToolDefinition]:
         """Get tool definitions based on agent config."""
@@ -196,10 +202,13 @@ class AgentWorker:
 
         return f"Unknown tool: {name}"
 
-    async def _process_message(self, user_message: str) -> str:
+    async def _process_message(self, user_message: str, source: str = "unknown") -> str:
         """Process a user message through the LLM with tool calling loop."""
         if not self.llm:
             self.llm = _create_llm_provider(self.config, self.model)
+
+        # Get context for this channel
+        context = self._get_context(source)
 
         # Build system prompt
         rules_content = load_rules(self.workspace)
@@ -213,18 +222,18 @@ class AgentWorker:
             memory_content=memory_content,
             rules_content=rules_content,
         )
-        self.context.set_system_prompt(system_prompt)
-        self.context.add_message("user", user_message)
+        context.set_system_prompt(system_prompt)
+        context.add_message("user", user_message)
 
         # Check if compression needed
-        if self.context.needs_compression():
-            await self.context.compress(self.llm)
+        if context.needs_compression():
+            await context.compress(self.llm)
 
         tools = self._get_tools()
         max_tool_rounds = 10
 
         for _ in range(max_tool_rounds):
-            messages = self.context.get_messages()
+            messages = context.get_messages()
             response = await self.llm.chat(
                 messages=messages,
                 model=self.model,
@@ -239,18 +248,18 @@ class AgentWorker:
             # If no tool calls, return the text response
             if not response.tool_calls:
                 if response.content:
-                    self.context.add_message("assistant", response.content)
+                    context.add_message("assistant", response.content)
                 return response.content
 
             # Handle tool calls
             # First add the assistant message with tool calls indication
             tool_call_desc = ", ".join(tc["name"] for tc in response.tool_calls)
             assistant_msg = response.content or f"[Calling tools: {tool_call_desc}]"
-            self.context.add_message("assistant", assistant_msg)
+            context.add_message("assistant", assistant_msg)
 
             for tc in response.tool_calls:
                 result = await self._handle_tool_call(tc["name"], tc.get("arguments", {}))
-                self.context.add_message("tool", result, name=tc["name"])
+                context.add_message("tool", result, name=tc["name"])
 
         return "Maximum tool call rounds reached. Please try again."
 
@@ -282,7 +291,7 @@ class AgentWorker:
 
                     try:
                         self.logger.info(f"Calling LLM for message from {source}...")
-                        reply = await self._process_message(user_text)
+                        reply = await self._process_message(user_text, source)
                         self.logger.info(f"LLM reply received ({len(reply) if reply else 0} chars), sending to outbox")
                         self.outbox.put({
                             "type": "reply",
@@ -306,18 +315,27 @@ class AgentWorker:
 
                 elif msg_type == "set_model":
                     new_model = msg.get("model", "")
+                    source = msg.get("source", "unknown")
                     self.model = new_model
                     self.llm = None  # Force re-creation
-                    self.context.add_message("assistant", f"[Model switched to {new_model}]")
+                    # Add model switch note to all active contexts
+                    for ctx in self.contexts.values():
+                        ctx.add_message("assistant", f"[Model switched to {new_model}]")
                     self.logger.info(f"Model changed to: {new_model}")
 
                 elif msg_type == "reset_context":
-                    self.context.reset()
-                    self.logger.info("Context reset")
+                    source = msg.get("source", "unknown")
+                    if source in self.contexts:
+                        self.contexts[source].reset()
+                        self.logger.info(f"Context reset for {source}")
+                    else:
+                        self.logger.info(f"No context to reset for {source}")
 
                 elif msg_type == "get_stats":
+                    source = msg.get("source", "unknown")
+                    context = self._get_context(source)
                     stats = {
-                        "context": self.context.get_stats(),
+                        "context": context.get_stats(),
                         "token_usage": self.token_counter.get_session_usage(),
                         "model": self.model,
                     }

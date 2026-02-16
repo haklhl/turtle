@@ -74,3 +74,19 @@ class BaseChannel(abc.ABC):
         if not allowed:
             return True  # Empty list = allow all
         return user_id in allowed
+
+    def _is_owner(self, user_id: int, agent_id: str, channel_type: str) -> bool:
+        """Check if a user is an owner (can execute sensitive commands).
+
+        Args:
+            user_id: User's numeric ID.
+            agent_id: Agent identifier.
+            channel_type: 'telegram' or 'discord'.
+
+        Returns:
+            True if user is in owner_user_ids list.
+        """
+        agent_cfg = self.config.get("agents", {}).get(agent_id, {})
+        channel_cfg = agent_cfg.get(channel_type, {})
+        owners = channel_cfg.get("owner_user_ids", [])
+        return user_id in owners
