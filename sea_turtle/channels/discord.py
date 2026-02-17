@@ -215,7 +215,7 @@ class DiscordChannel(BaseChannel):
                 command="/start", agent_id=agent_id, source="discord",
                 chat_id=interaction.channel_id, user_id=interaction.user.id,
             )
-            await interaction.response.send_message(reply)
+            await interaction.response.send_message(reply, ephemeral=True)
 
         @bot.tree.command(name="help", description="Show available commands")
         async def cmd_help(interaction: discord.Interaction):
@@ -223,7 +223,7 @@ class DiscordChannel(BaseChannel):
                 command="/help", agent_id=agent_id, source="discord",
                 chat_id=interaction.channel_id, user_id=interaction.user.id,
             )
-            await interaction.response.send_message(reply)
+            await interaction.response.send_message(reply, ephemeral=True)
 
         @bot.tree.command(name="context", description="Show context statistics")
         async def cmd_context(interaction: discord.Interaction):
@@ -231,7 +231,7 @@ class DiscordChannel(BaseChannel):
                 command="/context", agent_id=agent_id, source="discord",
                 chat_id=interaction.channel_id, user_id=interaction.user.id,
             )
-            await interaction.response.send_message(reply)
+            await interaction.response.send_message(reply, ephemeral=True)
 
         @bot.tree.command(name="usage", description="Show token usage and costs")
         async def cmd_usage(interaction: discord.Interaction):
@@ -239,7 +239,7 @@ class DiscordChannel(BaseChannel):
                 command="/usage", agent_id=agent_id, source="discord",
                 chat_id=interaction.channel_id, user_id=interaction.user.id,
             )
-            await interaction.response.send_message(reply)
+            await interaction.response.send_message(reply, ephemeral=True)
 
         @bot.tree.command(name="status", description="Show agent status")
         async def cmd_status(interaction: discord.Interaction):
@@ -247,7 +247,7 @@ class DiscordChannel(BaseChannel):
                 command="/status", agent_id=agent_id, source="discord",
                 chat_id=interaction.channel_id, user_id=interaction.user.id,
             )
-            await interaction.response.send_message(reply)
+            await interaction.response.send_message(reply, ephemeral=True)
 
         @bot.tree.command(name="reset", description="Reset conversation context (owner only)")
         async def cmd_reset(interaction: discord.Interaction):
@@ -258,7 +258,7 @@ class DiscordChannel(BaseChannel):
                 command="/reset", agent_id=agent_id, source="discord",
                 chat_id=interaction.channel_id, user_id=interaction.user.id,
             )
-            await interaction.response.send_message(reply)
+            await interaction.response.send_message(reply, ephemeral=True)
 
         @bot.tree.command(name="restart", description="Restart agent process (owner only)")
         async def cmd_restart(interaction: discord.Interaction):
@@ -269,7 +269,7 @@ class DiscordChannel(BaseChannel):
                 command="/restart", agent_id=agent_id, source="discord",
                 chat_id=interaction.channel_id, user_id=interaction.user.id,
             )
-            await interaction.response.send_message(reply)
+            await interaction.response.send_message(reply, ephemeral=True)
 
         @bot.tree.command(name="model", description="List or switch models (owner only)")
         @app_commands.describe(action="'list' to show models, or model name to switch")
@@ -281,7 +281,7 @@ class DiscordChannel(BaseChannel):
                 command=f"/model {action}", agent_id=agent_id, source="discord",
                 chat_id=interaction.channel_id, user_id=interaction.user.id,
             )
-            await interaction.response.send_message(reply)
+            await interaction.response.send_message(reply, ephemeral=True)
 
     async def _send_discord_message(self, channel, text: str) -> None:
         """Send a message to a Discord channel, splitting if needed."""
