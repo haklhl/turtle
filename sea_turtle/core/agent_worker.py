@@ -15,6 +15,7 @@ from sea_turtle.core.context import ContextManager
 from sea_turtle.core.memory import MemoryManager
 from sea_turtle.core.rules import load_rules, load_skills
 from sea_turtle.core.shell import ShellExecutor
+from sea_turtle.core.tasks import apply_task_updates, extract_task_report
 from sea_turtle.core.token_counter import TokenCounter
 from sea_turtle.llm.base import BaseLLMProvider, LLMResponse, ToolDefinition
 from sea_turtle.llm.registry import resolve_provider
@@ -69,7 +70,7 @@ MEMORY_WRITE_TOOL = ToolDefinition(
 
 TASK_READ_TOOL = ToolDefinition(
     name="read_tasks",
-    description="Read the agent's task list from task.md.",
+    description="Read the structured task list from task.json.",
     parameters={
         "type": "object",
         "properties": {},
@@ -364,6 +365,82 @@ class AgentWorker:
 
         return "Maximum tool call rounds reached. Please try again."
 
+    async def _process_incoming_message(self, msg: dict) -> None:
+        """Process one message-like inbox item and emit a reply."""
+        user_text = msg.get("content", "")
+        source = msg.get("source", "unknown")
+        self.logger.info(f"Processing message from {source}: {user_text[:100]}...")
+        started_at = time.monotonic()
+        _, context = self._get_context(source, msg.get("chat_id"), msg.get("user_id"))
+
+        try:
+            self.logger.info(f"Calling LLM for message from {source}...")
+            reply = await self._process_message(
+                user_text,
+                source,
+                chat_id=msg.get("chat_id"),
+                user_id=msg.get("user_id"),
+                attachments=msg.get("attachments", []),
+            )
+            elapsed_ms = int((time.monotonic() - started_at) * 1000)
+            self._request_count += 1
+            self._last_processing_time_ms = elapsed_ms
+            self._total_processing_time_ms += elapsed_ms
+            context.record_response_time(elapsed_ms)
+
+            outbox_message = {
+                "type": "reply",
+                "agent_id": self.agent_id,
+                "content": reply or "(empty response)",
+                "source": source,
+                "chat_id": msg.get("chat_id"),
+                "user_id": msg.get("user_id"),
+                "elapsed_ms": elapsed_ms,
+            }
+
+            if msg.get("type") == "heartbeat":
+                summary, report = extract_task_report(reply or "")
+                if report:
+                    updates = report.get("updates", [])
+                    applied = apply_task_updates(self.workspace, updates if isinstance(updates, list) else [])
+                    if applied:
+                        outbox_message["task_updates"] = applied
+                    summary_text = summary.replace("SUMMARY:", "", 1).strip() if summary else ""
+                    if not summary_text:
+                        summary_text = str(report.get("summary") or "").strip()
+                    outbox_message["content"] = summary_text or "Heartbeat processed pending tasks."
+                else:
+                    outbox_message["content"] = (
+                        "Heartbeat ran, but no valid task report was produced. "
+                        "Task state was left unchanged."
+                    )
+
+            self.logger.info(
+                f"LLM reply received ({len(reply) if reply else 0} chars), sending to outbox"
+            )
+            self.outbox.put(outbox_message)
+            self.logger.info(
+                f"Reply queued to outbox for {source}:{msg.get('chat_id')} "
+                f"(elapsed={elapsed_ms}ms)"
+            )
+        except Exception as e:
+            elapsed_ms = int((time.monotonic() - started_at) * 1000)
+            self._request_count += 1
+            self._error_count += 1
+            self._last_processing_time_ms = elapsed_ms
+            self._total_processing_time_ms += elapsed_ms
+            context.record_response_time(elapsed_ms)
+            self.logger.error(f"Error processing message: {e}", exc_info=True)
+            self.outbox.put({
+                "type": "reply",
+                "agent_id": self.agent_id,
+                "content": f"❌ Error: {e}",
+                "source": source,
+                "chat_id": msg.get("chat_id"),
+                "user_id": msg.get("user_id"),
+                "elapsed_ms": elapsed_ms,
+            })
+
     async def run(self) -> None:
         """Main agent worker loop. Reads from inbox, processes, writes to outbox."""
         self._running = True
@@ -385,58 +462,8 @@ class AgentWorker:
                     break
 
                 msg_type = msg.get("type", "")
-                if msg_type == "message":
-                    user_text = msg.get("content", "")
-                    source = msg.get("source", "unknown")
-                    self.logger.info(f"Processing message from {source}: {user_text[:100]}...")
-                    started_at = time.monotonic()
-                    conversation_id, context = self._get_context(source, msg.get("chat_id"), msg.get("user_id"))
-
-                    try:
-                        self.logger.info(f"Calling LLM for message from {source}...")
-                        reply = await self._process_message(
-                            user_text,
-                            source,
-                            chat_id=msg.get("chat_id"),
-                            user_id=msg.get("user_id"),
-                            attachments=msg.get("attachments", []),
-                        )
-                        elapsed_ms = int((time.monotonic() - started_at) * 1000)
-                        self._request_count += 1
-                        self._last_processing_time_ms = elapsed_ms
-                        self._total_processing_time_ms += elapsed_ms
-                        context.record_response_time(elapsed_ms)
-                        self.logger.info(f"LLM reply received ({len(reply) if reply else 0} chars), sending to outbox")
-                        self.outbox.put({
-                            "type": "reply",
-                            "agent_id": self.agent_id,
-                            "content": reply or "(empty response)",
-                            "source": source,
-                            "chat_id": msg.get("chat_id"),
-                            "user_id": msg.get("user_id"),
-                            "elapsed_ms": elapsed_ms,
-                        })
-                        self.logger.info(
-                            f"Reply queued to outbox for {source}:{msg.get('chat_id')} "
-                            f"(elapsed={elapsed_ms}ms)"
-                        )
-                    except Exception as e:
-                        elapsed_ms = int((time.monotonic() - started_at) * 1000)
-                        self._request_count += 1
-                        self._error_count += 1
-                        self._last_processing_time_ms = elapsed_ms
-                        self._total_processing_time_ms += elapsed_ms
-                        context.record_response_time(elapsed_ms)
-                        self.logger.error(f"Error processing message: {e}", exc_info=True)
-                        self.outbox.put({
-                            "type": "reply",
-                            "agent_id": self.agent_id,
-                            "content": f"❌ Error: {e}",
-                            "source": source,
-                            "chat_id": msg.get("chat_id"),
-                            "user_id": msg.get("user_id"),
-                            "elapsed_ms": elapsed_ms,
-                        })
+                if msg_type in {"message", "heartbeat"}:
+                    await self._process_incoming_message(msg)
 
                 elif msg_type == "set_model":
                     new_model = msg.get("model", "")

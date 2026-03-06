@@ -82,7 +82,7 @@ TOOL_GUIDANCE_SECTION = """\
 ## Tool Guidance
 - `shell`: Execute commands inside the workspace. Prefer direct inspection and minimal commands.
 - `memory`: Read or update long-lived notes in `memory.md` when the fact is worth persisting.
-- `task`: Read `task.md` when the user asks about tasks or you need to continue queued work.
+- `task`: Read structured task state from `task.json` when the user asks about tasks or you need to continue queued work.
 - Ask for confirmation before any destructive or privilege-changing command.
 """
 

@@ -3,6 +3,8 @@
 import os
 from pathlib import Path
 
+from sea_turtle.core.tasks import init_task_store, list_actionable_tasks, render_task_file
+
 
 def load_rules(workspace: str) -> str:
     """Load rules.md content from agent workspace.
@@ -43,28 +45,23 @@ def load_skills(workspace: str) -> str:
 
 
 def load_task(workspace: str) -> str:
-    """Load task.md content from agent workspace.
+    """Load structured task content from agent workspace.
 
     Args:
         workspace: Path to agent workspace directory.
 
     Returns:
-        Task content string, or empty string if not found.
+        JSON task content string.
     """
-    task_file = os.path.join(workspace, "task.md")
     try:
-        if os.path.exists(task_file):
-            with open(task_file, "r", encoding="utf-8") as f:
-                return f.read()
+        return render_task_file(workspace)
     except Exception:
         pass
     return ""
 
 
 def get_pending_tasks(workspace: str) -> list[str]:
-    """Parse task.md and return list of uncompleted tasks.
-
-    Looks for markdown checkbox items: `- [ ] task description`
+    """Return list of actionable task titles from structured task store.
 
     Args:
         workspace: Path to agent workspace directory.
@@ -72,18 +69,7 @@ def get_pending_tasks(workspace: str) -> list[str]:
     Returns:
         List of pending task description strings.
     """
-    content = load_task(workspace)
-    if not content:
-        return []
-
-    pending = []
-    for line in content.splitlines():
-        stripped = line.strip()
-        if stripped.startswith("- [ ]"):
-            task_text = stripped[5:].strip()
-            if task_text:
-                pending.append(task_text)
-    return pending
+    return [task["title"] for task in list_actionable_tasks(workspace) if task.get("title")]
 
 
 def init_agent_workspace(workspace: str, agent_name: str = "Turtle", human_name: str = "Human") -> None:
@@ -125,6 +111,4 @@ def init_agent_workspace(workspace: str, agent_name: str = "Turtle", human_name:
     if not memory_file.exists():
         memory_file.write_text("", encoding="utf-8")
 
-    task_file = ws / "task.md"
-    if not task_file.exists():
-        task_file.write_text("# Tasks\n\n<!-- Add tasks as: - [ ] task description -->\n", encoding="utf-8")
+    init_task_store(workspace)

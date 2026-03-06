@@ -1,16 +1,16 @@
-"""Heartbeat system for periodic task.md checking."""
+"""Heartbeat system for periodic structured task checking."""
 
 import asyncio
 import logging
 from typing import Callable, Awaitable
 
-from sea_turtle.core.rules import get_pending_tasks
+from sea_turtle.core.tasks import list_actionable_tasks
 
 logger = logging.getLogger("sea_turtle.heartbeat")
 
 
 class Heartbeat:
-    """Periodically check agent task.md for pending tasks.
+    """Periodically check agent task.json for actionable tasks.
 
     When pending tasks are found, notifies the agent to process them.
     When no tasks exist, the heartbeat sleeps to conserve resources.
@@ -21,7 +21,7 @@ class Heartbeat:
         agent_id: str,
         workspace: str,
         interval: int = 300,
-        on_tasks_found: Callable[[str, list[str]], Awaitable[None]] | None = None,
+        on_tasks_found: Callable[[str, list[dict]], Awaitable[None]] | None = None,
     ):
         """Initialize heartbeat.
 
@@ -76,7 +76,7 @@ class Heartbeat:
 
     async def _check(self) -> None:
         """Check for pending tasks."""
-        pending = get_pending_tasks(self.workspace)
+        pending = list_actionable_tasks(self.workspace)
         if pending:
             logger.info(f"Agent '{self.agent_id}' has {len(pending)} pending task(s)")
             if self.on_tasks_found:

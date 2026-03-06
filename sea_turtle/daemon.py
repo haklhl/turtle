@@ -15,6 +15,7 @@ from sea_turtle.core.agent import AgentManager
 from sea_turtle.core.heartbeat import Heartbeat
 from sea_turtle.core.token_counter import TokenCounter
 from sea_turtle.core.context import ContextManager
+from sea_turtle.core.tasks import format_task_snapshot, touch_tasks_for_heartbeat
 from sea_turtle.llm.registry import list_models, format_model_list, get_model_info, resolve_provider
 from sea_turtle.utils.logger import get_daemon_logger
 
@@ -476,6 +477,8 @@ class Daemon:
             await self._send_telegram_reply(chat_id, payload["text"], agent_id, payload["attachments"])
         elif source == "discord":
             await self._send_discord_reply(chat_id, payload["text"], agent_id)
+        elif source == "heartbeat":
+            await self._send_heartbeat_summary(agent_id, payload["text"])
         else:
             logger.debug(f"Reply to {source}: {payload['text'][:100]}")
 
@@ -511,6 +514,25 @@ class Daemon:
         else:
             logger.warning(f"Discord channel not available, cannot send reply to {chat_id}")
 
+    def _telegram_owner_ids(self, agent_id: str) -> list[int]:
+        agent_cfg = get_agent_config(self.config, agent_id) or {}
+        agent_tg_cfg = agent_cfg.get("telegram", {})
+        global_tg_cfg = self.config.get("telegram", {})
+        owners = agent_tg_cfg.get("owner_user_ids") or global_tg_cfg.get("default_owner_ids", [])
+        return [int(owner) for owner in owners]
+
+    async def _send_heartbeat_summary(self, agent_id: str, content: str) -> None:
+        """Push heartbeat task summary to Telegram owners."""
+        if not content or not self._telegram_channel:
+            return
+        owners = self._telegram_owner_ids(agent_id)
+        if not owners:
+            logger.info(f"No Telegram owners configured for heartbeat summary of '{agent_id}'")
+            return
+        summary = f"🫀 Heartbeat / {agent_id}\n{content.strip()}"
+        for owner_id in owners:
+            await self._telegram_channel.send_message(owner_id, summary, agent_id)
+
     async def _health_monitor(self) -> None:
         """Periodically check agent health and recover crashed agents."""
         while self._running:
@@ -519,14 +541,33 @@ class Daemon:
             if restarted:
                 logger.warning(f"Recovered crashed agents: {restarted}")
 
-    async def _on_tasks_found(self, agent_id: str, tasks: list[str]) -> None:
+    async def _on_tasks_found(self, agent_id: str, tasks: list[dict]) -> None:
         """Callback when heartbeat finds pending tasks."""
-        task_list = "\n".join(f"- {t}" for t in tasks[:5])
-        message = f"You have {len(tasks)} pending task(s):\n{task_list}\nPlease work on them."
+        task_ids = [task["id"] for task in tasks]
+        touch_tasks_for_heartbeat(
+            (get_agent_config(self.config, agent_id) or {}).get("workspace", f"~/.sea_turtle/agents/{agent_id}"),
+            task_ids,
+        )
+        message = (
+            "You are handling a periodic heartbeat task sweep.\n"
+            "Review the actionable tasks below and do whatever work is appropriate now.\n"
+            "Return a concise owner-facing summary first, then a machine-readable task report.\n\n"
+            "Format exactly:\n"
+            "SUMMARY:\n<short Chinese summary for the owner>\n\n"
+            "TASK_REPORT:\n"
+            "```json\n"
+            "{\"updates\":[{\"id\":\"task-1\",\"status\":\"pending|in_progress|done|cancelled\",\"result\":\"...\",\"notes\":\"...\"}],"
+            "\"summary\":\"optional short summary\"}\n"
+            "```\n\n"
+            "Only include tasks that changed or that you actually reviewed.\n"
+            "Actionable tasks:\n"
+            f"{format_task_snapshot(tasks)}"
+        )
         self.agent_manager.send_message(agent_id, {
-            "type": "message",
+            "type": "heartbeat",
             "content": message,
             "source": "heartbeat",
+            "tasks": tasks,
         })
 
     async def _start_channels(self) -> None:
