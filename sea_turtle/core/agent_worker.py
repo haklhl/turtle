@@ -9,11 +9,11 @@ from multiprocessing import Queue
 from pathlib import Path
 from typing import Any
 
-from sea_turtle.config.loader import load_config, get_agent_config
+from sea_turtle.config.loader import get_agent_config
 from sea_turtle.core.context import ContextManager
 from sea_turtle.core.memory import MemoryManager
 from sea_turtle.core.rules import load_rules, load_skills
-from sea_turtle.core.shell import ShellExecutor, ShellResult
+from sea_turtle.core.shell import ShellExecutor
 from sea_turtle.core.token_counter import TokenCounter
 from sea_turtle.llm.base import BaseLLMProvider, LLMResponse, ToolDefinition
 from sea_turtle.llm.registry import resolve_provider
@@ -82,16 +82,17 @@ ALL_TOOLS = {
 }
 
 
-def _create_llm_provider(config: dict, model: str) -> BaseLLMProvider:
+def _create_llm_provider(config: dict, model: str, workspace: str | None = None) -> BaseLLMProvider:
     """Create the appropriate LLM provider based on model name and config."""
     from sea_turtle.config.loader import resolve_secret
 
     provider_name = resolve_provider(model, config.get("llm", {}).get("default_provider", "google"))
     providers_cfg = config.get("llm", {}).get("providers", {})
     provider_cfg = providers_cfg.get(provider_name, {})
+    persistence_cfg = config.get("conversation_persistence", {})
     api_key = resolve_secret(provider_cfg, "api_key", "api_key_env")
 
-    if not api_key:
+    if provider_name != "codex" and not api_key:
         raise ValueError(
             f"API key not found for provider '{provider_name}'. "
             f"Set 'api_key' in config.json or env var '{provider_cfg.get('api_key_env', '')}'."
@@ -112,6 +113,25 @@ def _create_llm_provider(config: dict, model: str) -> BaseLLMProvider:
     elif provider_name == "xai":
         from sea_turtle.llm.xai import XAIProvider
         return XAIProvider(api_key=api_key)
+    elif provider_name == "codex":
+        from sea_turtle.llm.codex import CodexProvider
+        return CodexProvider(
+            api_key=api_key,
+            command=provider_cfg.get("command", "codex"),
+            workdir=workspace,
+            use_oss=provider_cfg.get("use_oss", True),
+            local_provider=provider_cfg.get("local_provider"),
+            sandbox=provider_cfg.get("sandbox", "workspace-write"),
+            approval_policy=provider_cfg.get("approval_policy", "never"),
+            profile=provider_cfg.get("profile"),
+            persist_sessions=(
+                provider_cfg.get("persist_sessions", True)
+                and persistence_cfg.get("enabled", True)
+                and persistence_cfg.get("persist_codex_sessions", True)
+            ),
+            session_file=str(Path(workspace or ".").resolve() / persistence_cfg.get("codex_session_file", ".codex_sessions.json")),
+            extra_args=provider_cfg.get("extra_args", []),
+        )
     else:
         raise ValueError(f"Unknown provider: {provider_name}")
 
@@ -137,7 +157,7 @@ class AgentWorker:
         self.model = self.agent_config.get("model", config.get("llm", {}).get("default_model", "gemini-2.5-flash"))
         self.workspace = str(Path(self.agent_config.get("workspace", f"./agents/{agent_id}")).resolve())
         self.logger = get_agent_logger(agent_id, config)
-        self.contexts: dict[str, ContextManager] = {}  # Per-channel context isolation
+        self.contexts: dict[str, ContextManager] = {}  # Per-conversation context isolation
         self.memory = MemoryManager(self.workspace)
         self.token_counter = TokenCounter(config, agent_id)
         self.shell = ShellExecutor(
@@ -147,11 +167,22 @@ class AgentWorker:
         self.llm: BaseLLMProvider | None = None
         self._running = False
 
-    def _get_context(self, source: str) -> ContextManager:
-        """Get or create a ContextManager for a specific channel source."""
-        if source not in self.contexts:
-            self.contexts[source] = ContextManager(self.config)
-        return self.contexts[source]
+    @staticmethod
+    def _conversation_id(source: str, chat_id: Any = None, user_id: Any = None) -> str:
+        """Build a stable per-conversation key."""
+        parts = [source or "unknown"]
+        if chat_id is not None:
+            parts.append(f"chat:{chat_id}")
+        if user_id is not None:
+            parts.append(f"user:{user_id}")
+        return "|".join(str(part) for part in parts)
+
+    def _get_context(self, source: str, chat_id: Any = None, user_id: Any = None) -> tuple[str, ContextManager]:
+        """Get or create a ContextManager for a specific conversation."""
+        conversation_id = self._conversation_id(source, chat_id, user_id)
+        if conversation_id not in self.contexts:
+            self.contexts[conversation_id] = ContextManager(self.config)
+        return conversation_id, self.contexts[conversation_id]
 
     def _get_tools(self) -> list[ToolDefinition]:
         """Get tool definitions based on agent config."""
@@ -202,13 +233,19 @@ class AgentWorker:
 
         return f"Unknown tool: {name}"
 
-    async def _process_message(self, user_message: str, source: str = "unknown") -> str:
+    async def _process_message(
+        self,
+        user_message: str,
+        source: str = "unknown",
+        chat_id: Any = None,
+        user_id: Any = None,
+    ) -> str:
         """Process a user message through the LLM with tool calling loop."""
         if not self.llm:
-            self.llm = _create_llm_provider(self.config, self.model)
+            self.llm = _create_llm_provider(self.config, self.model, workspace=self.workspace)
 
         # Get context for this channel
-        context = self._get_context(source)
+        conversation_id, context = self._get_context(source, chat_id, user_id)
 
         # Build system prompt
         rules_content = load_rules(self.workspace)
@@ -240,6 +277,12 @@ class AgentWorker:
                 temperature=self.config.get("llm", {}).get("temperature", 0.7),
                 max_output_tokens=self.config.get("llm", {}).get("max_output_tokens", 8192),
                 tools=tools if tools else None,
+                metadata={
+                    "conversation_id": conversation_id,
+                    "source": source,
+                    "chat_id": chat_id,
+                    "user_id": user_id,
+                },
             )
 
             # Record token usage
@@ -252,14 +295,16 @@ class AgentWorker:
                 return response.content
 
             # Handle tool calls
-            # First add the assistant message with tool calls indication
-            tool_call_desc = ", ".join(tc["name"] for tc in response.tool_calls)
-            assistant_msg = response.content or f"[Calling tools: {tool_call_desc}]"
-            context.add_message("assistant", assistant_msg)
+            context.add_message("assistant", response.content or "", tool_calls=response.tool_calls)
 
             for tc in response.tool_calls:
                 result = await self._handle_tool_call(tc["name"], tc.get("arguments", {}))
-                context.add_message("tool", result, name=tc["name"])
+                context.add_message(
+                    "tool",
+                    result,
+                    name=tc["name"],
+                    tool_call_id=tc.get("id", ""),
+                )
 
         return "Maximum tool call rounds reached. Please try again."
 
@@ -291,7 +336,12 @@ class AgentWorker:
 
                     try:
                         self.logger.info(f"Calling LLM for message from {source}...")
-                        reply = await self._process_message(user_text, source)
+                        reply = await self._process_message(
+                            user_text,
+                            source,
+                            chat_id=msg.get("chat_id"),
+                            user_id=msg.get("user_id"),
+                        )
                         self.logger.info(f"LLM reply received ({len(reply) if reply else 0} chars), sending to outbox")
                         self.outbox.put({
                             "type": "reply",
@@ -325,15 +375,16 @@ class AgentWorker:
 
                 elif msg_type == "reset_context":
                     source = msg.get("source", "unknown")
-                    if source in self.contexts:
-                        self.contexts[source].reset()
-                        self.logger.info(f"Context reset for {source}")
+                    conversation_id = self._conversation_id(source, msg.get("chat_id"), msg.get("user_id"))
+                    if conversation_id in self.contexts:
+                        self.contexts[conversation_id].reset()
+                        self.logger.info(f"Context reset for {conversation_id}")
                     else:
-                        self.logger.info(f"No context to reset for {source}")
+                        self.logger.info(f"No context to reset for {conversation_id}")
 
                 elif msg_type == "get_stats":
                     source = msg.get("source", "unknown")
-                    context = self._get_context(source)
+                    _, context = self._get_context(source, msg.get("chat_id"), msg.get("user_id"))
                     stats = {
                         "context": context.get_stats(),
                         "token_usage": self.token_counter.get_session_usage(),

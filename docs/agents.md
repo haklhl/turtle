@@ -35,11 +35,13 @@ seaturtle agent add myagent --name "My Agent" --model gpt-4o --sandbox confined
       "sandbox": "confined",
       "telegram": {
         "bot_token_env": "TELEGRAM_BOT_TOKEN_MYAGENT",
-        "allowed_user_ids": []
+        "allowed_user_ids": [],
+        "owner_user_ids": []
       },
       "discord": {
         "bot_token_env": "DISCORD_BOT_TOKEN_MYAGENT",
-        "allowed_user_ids": []
+        "allowed_user_ids": [],
+        "owner_user_ids": []
       }
     }
   }
@@ -122,3 +124,4 @@ seaturtle agent del myagent
 - 每个 Agent 可绑定独立的 Telegram/Discord Bot
 - 也可多个 Agent 共享一个 Bot，通过 `/agent <id>` 切换
 - `allowed_user_ids` 为空表示允许所有用户
+- `owner_user_ids` 控制敏感命令权限；为空时会回退到全局默认 owner 列表

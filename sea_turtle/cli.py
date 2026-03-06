@@ -135,9 +135,13 @@ def _load_cfg(args):
     return load_config(getattr(args, "config", None))
 
 
-def _get_pid() -> int | None:
+def _get_pid(config_path: str | None = None) -> int | None:
     """Read daemon PID from file."""
-    pid_file = Path("~/.sea_turtle/daemon.pid").expanduser()
+    try:
+        config = _load_cfg(argparse.Namespace(config=config_path))
+        pid_file = Path(config.get("global", {}).get("pid_file", "~/.sea_turtle/daemon.pid")).expanduser()
+    except Exception:
+        pid_file = Path("~/.sea_turtle/daemon.pid").expanduser()
     if pid_file.exists():
         try:
             return int(pid_file.read_text().strip())
@@ -146,8 +150,8 @@ def _get_pid() -> int | None:
     return None
 
 
-def _is_daemon_running() -> bool:
-    pid = _get_pid()
+def _is_daemon_running(config_path: str | None = None) -> bool:
+    pid = _get_pid(config_path)
     if pid is None:
         return False
     try:
@@ -159,20 +163,21 @@ def _is_daemon_running() -> bool:
 
 def cmd_start(args):
     """Start the daemon process."""
-    if _is_daemon_running():
-        print("🐢 Daemon is already running (PID: {}).".format(_get_pid()))
+    config_path = getattr(args, "config", None)
+    if _is_daemon_running(config_path):
+        print("🐢 Daemon is already running (PID: {}).".format(_get_pid(config_path)))
         return
 
     print("🐢 Starting Sea Turtle daemon...")
     from sea_turtle.daemon import run_daemon
-    config_path = getattr(args, "config", None)
     run_daemon(config_path)
 
 
 def cmd_stop(args):
     """Stop the daemon process."""
-    pid = _get_pid()
-    if pid is None or not _is_daemon_running():
+    config_path = getattr(args, "config", None)
+    pid = _get_pid(config_path)
+    if pid is None or not _is_daemon_running(config_path):
         print("🐢 Daemon is not running.")
         return
 
@@ -186,8 +191,9 @@ def cmd_stop(args):
 
 def cmd_status(args):
     """Show daemon and agent status."""
-    pid = _get_pid()
-    running = _is_daemon_running()
+    config_path = getattr(args, "config", None)
+    pid = _get_pid(config_path)
+    running = _is_daemon_running(config_path)
 
     print(f"🐢 Sea Turtle v{__version__}")
     print(f"  Daemon: {'🟢 Running' if running else '🔴 Stopped'} (PID: {pid or 'N/A'})")
@@ -254,7 +260,7 @@ def cmd_agent(args):
         print(json.dumps(agent_cfg, indent=2, ensure_ascii=False))
 
     elif args.agent_command in ("start", "stop", "restart"):
-        if not _is_daemon_running():
+        if not _is_daemon_running(getattr(args, "config", None)):
             print("⚠️ Daemon is not running. Start it first: seaturtle start")
             return
         print(f"ℹ️ Agent {args.agent_command} requires a running daemon. Use Telegram/Discord commands or restart the daemon.")
@@ -283,8 +289,16 @@ def _agent_add(args, config):
         "model": model,
         "tools": ["shell", "memory", "task"],
         "sandbox": sandbox,
-        "telegram": {"bot_token_env": f"TELEGRAM_BOT_TOKEN_{agent_id.upper()}", "allowed_user_ids": []},
-        "discord": {"bot_token_env": f"DISCORD_BOT_TOKEN_{agent_id.upper()}", "allowed_user_ids": []},
+        "telegram": {
+            "bot_token_env": f"TELEGRAM_BOT_TOKEN_{agent_id.upper()}",
+            "allowed_user_ids": [],
+            "owner_user_ids": [],
+        },
+        "discord": {
+            "bot_token_env": f"DISCORD_BOT_TOKEN_{agent_id.upper()}",
+            "allowed_user_ids": [],
+            "owner_user_ids": [],
+        },
     }
 
     config.setdefault("agents", {})[agent_id] = agent_cfg
@@ -438,6 +452,8 @@ def cmd_doctor(args):
             print(f"  {package}: ✅")
         except ImportError:
             print(f"  {package}: ❌ (not installed)")
+    codex_ok = subprocess.run(["bash", "-lc", "command -v codex >/dev/null"], check=False).returncode == 0
+    print(f"  codex CLI: {'✅' if codex_ok else '❌ (not installed)'}")
 
     # Config
     from sea_turtle.config.loader import find_config_file, load_config, validate_config

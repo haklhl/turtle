@@ -49,6 +49,7 @@ class BaseLLMProvider(abc.ABC):
         max_output_tokens: int = 8192,
         tools: list[ToolDefinition] | None = None,
         tool_choice: str = "auto",
+        metadata: dict[str, Any] | None = None,
     ) -> LLMResponse:
         """Send a chat completion request.
 
@@ -59,6 +60,7 @@ class BaseLLMProvider(abc.ABC):
             max_output_tokens: Maximum tokens in response.
             tools: Optional list of tool definitions for function calling.
             tool_choice: Tool choice strategy ('auto', 'none', 'required').
+            metadata: Optional provider-specific metadata.
 
         Returns:
             Standardized LLMResponse.
@@ -72,6 +74,7 @@ class BaseLLMProvider(abc.ABC):
         model: str,
         temperature: float = 0.7,
         max_output_tokens: int = 8192,
+        metadata: dict[str, Any] | None = None,
     ):
         """Send a streaming chat completion request.
 

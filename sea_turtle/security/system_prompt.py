@@ -38,6 +38,12 @@ SYSTEM_SAFETY_PROMPT = """\
 - Current sandbox mode: {sandbox_mode}
 - In confined/restricted mode: only read/write files within the agent workspace directory.
 - System config files are off-limits: /etc, ~/.ssh, ~/.config, etc.
+
+### Tool Usage Rules
+- Use tools only when they materially help complete the user's request.
+- Never expose internal tool-call placeholders such as `[Calling tools: ...]` to the user.
+- After using tools, give the user the actual result or a concise summary of what changed.
+- If a tool fails, explain the failure in plain language and propose the next safe step.
 """
 
 AGENT_CONTEXT_PROMPT = """\
@@ -66,6 +72,14 @@ MEMORY_SECTION = """\
 RULES_SECTION = """\
 ## Your Rules
 {rules_content}
+"""
+
+TOOL_GUIDANCE_SECTION = """\
+## Tool Guidance
+- `shell`: Execute commands inside the workspace. Prefer direct inspection and minimal commands.
+- `memory`: Read or update long-lived notes in `memory.md` when the fact is worth persisting.
+- `task`: Read `task.md` when the user asks about tasks or you need to continue queued work.
+- Ask for confirmation before any destructive or privilege-changing command.
 """
 
 
@@ -137,16 +151,19 @@ def build_system_prompt(
     parts.append(context)
 
     # 3. Skills (only if non-empty)
+    parts.append(TOOL_GUIDANCE_SECTION)
+
+    # 4. Skills (only if non-empty)
     skills_text = skills_content.strip()
     if skills_text and not _is_empty_skills(skills_text):
         parts.append(SKILLS_SECTION.format(skills_content=skills_text))
 
-    # 4. Memory (only if non-empty)
+    # 5. Memory (only if non-empty)
     memory_text = memory_content.strip()
     if memory_text:
         parts.append(MEMORY_SECTION.format(memory_content=memory_text))
 
-    # 5. User rules (from rules.md)
+    # 6. User rules (from rules.md)
     rules_text = rules_content.strip()
     if rules_text:
         parts.append(RULES_SECTION.format(rules_content=rules_text))

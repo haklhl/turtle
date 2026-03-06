@@ -49,6 +49,39 @@ class OpenAIProvider(BaseLLMProvider):
                 })
         return tool_calls
 
+    def _convert_messages(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Convert internal messages to OpenAI chat-completions format."""
+        converted = []
+        for msg in messages:
+            role = msg["role"]
+            content = msg.get("content", "")
+            if role == "assistant" and msg.get("tool_calls"):
+                converted.append({
+                    "role": "assistant",
+                    "content": content or None,
+                    "tool_calls": [
+                        {
+                            "id": tc.get("id", ""),
+                            "type": "function",
+                            "function": {
+                                "name": tc["name"],
+                                "arguments": json.dumps(tc.get("arguments", {}), ensure_ascii=False),
+                            },
+                        }
+                        for tc in msg["tool_calls"]
+                    ],
+                })
+            elif role == "tool":
+                converted.append({
+                    "role": "tool",
+                    "content": content,
+                    "tool_call_id": msg.get("tool_call_id", ""),
+                    "name": msg.get("name", "tool"),
+                })
+            else:
+                converted.append({"role": role, "content": content})
+        return converted
+
     async def chat(
         self,
         messages: list[dict[str, str]],
@@ -57,10 +90,11 @@ class OpenAIProvider(BaseLLMProvider):
         max_output_tokens: int = 8192,
         tools: list[ToolDefinition] | None = None,
         tool_choice: str = "auto",
+        metadata: dict[str, Any] | None = None,
     ) -> LLMResponse:
         kwargs: dict[str, Any] = {
             "model": model,
-            "messages": messages,
+            "messages": self._convert_messages(messages),
             "temperature": temperature,
             "max_tokens": max_output_tokens,
         }
@@ -95,10 +129,11 @@ class OpenAIProvider(BaseLLMProvider):
         model: str,
         temperature: float = 0.7,
         max_output_tokens: int = 8192,
+        metadata: dict[str, Any] | None = None,
     ):
         stream = await self.client.chat.completions.create(
             model=model,
-            messages=messages,
+            messages=self._convert_messages(messages),
             temperature=temperature,
             max_tokens=max_output_tokens,
             stream=True,

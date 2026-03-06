@@ -33,6 +33,15 @@
       "xai": {
         "api_key": "",
         "api_key_env": "XAI_API_KEY"
+      },
+      "codex": {
+        "command": "codex",
+        "use_oss": true,
+        "local_provider": "ollama",
+        "sandbox": "workspace-write",
+        "approval_policy": "never",
+        "persist_sessions": true,
+        "extra_args": []
       }
     }
   },
@@ -41,6 +50,11 @@
     "compress_threshold_ratio": 0.7,
     "compress_target_ratio": 0.3,
     "compress_model": "gemini-2.0-flash"
+  },
+  "conversation_persistence": {
+    "enabled": true,
+    "persist_codex_sessions": true,
+    "codex_session_file": ".codex_sessions.json"
   },
   "shell": {
     "enabled": true,
@@ -57,13 +71,19 @@
     "enabled": true,
     "bot_token": "your-telegram-bot-token-here",
     "bot_token_env": "TELEGRAM_BOT_TOKEN",
-    "allowed_user_ids": []
+    "default_allowed_user_ids": [],
+    "default_owner_ids": [],
+    "allowed_user_ids": [],
+    "owner_user_ids": []
   },
   "discord": {
     "enabled": false,
     "bot_token": "",
     "bot_token_env": "DISCORD_BOT_TOKEN",
-    "allowed_user_ids": []
+    "default_allowed_user_ids": [],
+    "default_owner_ids": [],
+    "allowed_user_ids": [],
+    "owner_user_ids": []
   },
   "heartbeat": {
     "enabled": true,
@@ -90,12 +110,14 @@
       "telegram": {
         "bot_token": "your-telegram-bot-token-here",
         "bot_token_env": "TELEGRAM_BOT_TOKEN",
-        "allowed_user_ids": []
+        "allowed_user_ids": [],
+        "owner_user_ids": []
       },
       "discord": {
         "bot_token": "",
         "bot_token_env": "DISCORD_BOT_TOKEN",
-        "allowed_user_ids": []
+        "allowed_user_ids": [],
+        "owner_user_ids": []
       }
     }
   }

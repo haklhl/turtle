@@ -32,7 +32,7 @@ class GoogleProvider(BaseLLMProvider):
 
         return [types.Tool(function_declarations=function_declarations)]
 
-    def _convert_messages(self, messages: list[dict[str, str]]) -> tuple[str | None, list[types.Content]]:
+    def _convert_messages(self, messages: list[dict[str, Any]]) -> tuple[str | None, list[types.Content]]:
         """Convert standard messages to Google format.
 
         Returns:
@@ -50,7 +50,16 @@ class GoogleProvider(BaseLLMProvider):
             elif role == "user":
                 contents.append(types.Content(role="user", parts=[types.Part.from_text(text=content)]))
             elif role == "assistant":
-                contents.append(types.Content(role="model", parts=[types.Part.from_text(text=content)]))
+                parts = []
+                if content:
+                    parts.append(types.Part.from_text(text=content))
+                for tool_call in msg.get("tool_calls", []):
+                    parts.append(types.Part.from_function_call(
+                        name=tool_call["name"],
+                        args=tool_call.get("arguments", {}),
+                    ))
+                if parts:
+                    contents.append(types.Content(role="model", parts=parts))
             elif role == "tool":
                 # Tool result message
                 contents.append(types.Content(
@@ -84,6 +93,7 @@ class GoogleProvider(BaseLLMProvider):
         max_output_tokens: int = 8192,
         tools: list[ToolDefinition] | None = None,
         tool_choice: str = "auto",
+        metadata: dict[str, Any] | None = None,
     ) -> LLMResponse:
         system_instruction, contents = self._convert_messages(messages)
         google_tools = self._build_tools(tools)
@@ -135,6 +145,7 @@ class GoogleProvider(BaseLLMProvider):
         model: str,
         temperature: float = 0.7,
         max_output_tokens: int = 8192,
+        metadata: dict[str, Any] | None = None,
     ):
         system_instruction, contents = self._convert_messages(messages)
 

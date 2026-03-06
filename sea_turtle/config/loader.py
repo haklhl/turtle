@@ -27,6 +27,15 @@ DEFAULT_CONFIG: dict[str, Any] = {
             "anthropic": {"api_key": "", "api_key_env": "ANTHROPIC_API_KEY"},
             "openrouter": {"api_key": "", "api_key_env": "OPENROUTER_API_KEY"},
             "xai": {"api_key": "", "api_key_env": "XAI_API_KEY"},
+            "codex": {
+                "command": "codex",
+                "use_oss": True,
+                "local_provider": "ollama",
+                "sandbox": "workspace-write",
+                "approval_policy": "never",
+                "persist_sessions": True,
+                "extra_args": [],
+            },
         },
     },
     "context": {
@@ -34,6 +43,11 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "compress_threshold_ratio": 0.7,
         "compress_target_ratio": 0.3,
         "compress_model": "gemini-2.0-flash",
+    },
+    "conversation_persistence": {
+        "enabled": True,
+        "persist_codex_sessions": True,
+        "codex_session_file": ".codex_sessions.json",
     },
     "shell": {
         "enabled": True,
@@ -53,13 +67,19 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "enabled": False,
         "bot_token": "",
         "bot_token_env": "TELEGRAM_BOT_TOKEN",
+        "default_allowed_user_ids": [],
+        "default_owner_ids": [],
         "allowed_user_ids": [],
+        "owner_user_ids": [],
     },
     "discord": {
         "enabled": False,
         "bot_token": "",
         "bot_token_env": "DISCORD_BOT_TOKEN",
+        "default_allowed_user_ids": [],
+        "default_owner_ids": [],
         "allowed_user_ids": [],
+        "owner_user_ids": [],
     },
     "heartbeat": {
         "enabled": True,
@@ -87,11 +107,13 @@ DEFAULT_CONFIG: dict[str, Any] = {
                 "bot_token": "",
                 "bot_token_env": "TELEGRAM_BOT_TOKEN",
                 "allowed_user_ids": [],
+                "owner_user_ids": [],
             },
             "discord": {
                 "bot_token": "",
                 "bot_token_env": "DISCORD_BOT_TOKEN",
                 "allowed_user_ids": [],
+                "owner_user_ids": [],
             },
         }
     },
@@ -219,6 +241,8 @@ def validate_config(config: dict) -> list[str]:
         issues.append(f"WARNING: Default LLM provider '{default_provider}' not configured.")
 
     for provider_name, provider_cfg in providers.items():
+        if provider_name == "codex":
+            continue
         resolved = resolve_secret(provider_cfg, "api_key", "api_key_env")
         if not resolved:
             issues.append(

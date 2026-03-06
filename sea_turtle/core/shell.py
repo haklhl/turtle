@@ -2,12 +2,12 @@
 
 import asyncio
 import os
-import re
 import shlex
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+
+from sea_turtle.core.sandbox import SandboxEnforcer
 
 
 @dataclass
@@ -39,6 +39,7 @@ class ShellExecutor:
         self.history_record_output = self.config.get("history_record_output", True)
         self.history_output_max = self.config.get("history_output_max_chars", 500)
         self.history_file = os.path.join(workspace, ".shell_history")
+        self.sandbox = SandboxEnforcer(sandbox_mode, self.workspace)
 
     def check_command(self, command: str) -> ShellResult | None:
         """Check if a command is safe to execute.
@@ -63,15 +64,13 @@ class ShellExecutor:
                 needs_confirmation=True,
             )
 
-        # Sandbox checks
-        if self.sandbox_mode in ("confined", "restricted"):
-            violation = self._check_sandbox_violation(command)
-            if violation:
-                return ShellResult(
-                    command=command, exit_code=-1,
-                    stdout="", stderr=f"Sandbox violation: {violation}",
-                    blocked=True,
-                )
+        violation = self.sandbox.check_command(command)
+        if violation:
+            return ShellResult(
+                command=command, exit_code=-1,
+                stdout="", stderr=f"Sandbox violation: {violation}",
+                blocked=True,
+            )
 
         return None
 
@@ -87,40 +86,6 @@ class ShellExecutor:
             if base_cmd in self.dangerous_commands:
                 return True
         return False
-
-    def _check_sandbox_violation(self, command: str) -> str | None:
-        """Check for sandbox violations in confined/restricted mode.
-
-        Returns:
-            Violation description string, or None if OK.
-        """
-        # Restricted mode: block network commands
-        if self.sandbox_mode == "restricted":
-            network_cmds = {"curl", "wget", "nc", "ncat", "netcat", "ssh", "scp", "sftp", "ftp", "telnet"}
-            try:
-                tokens = shlex.split(command)
-            except ValueError:
-                tokens = command.split()
-            for token in tokens:
-                if os.path.basename(token) in network_cmds:
-                    return f"Network command '{os.path.basename(token)}' is not allowed in restricted mode."
-
-        # Path traversal check for confined/restricted
-        if ".." in command:
-            # More sophisticated check: look for path traversal patterns
-            patterns = [r"\.\./", r"\.\.\x00", r"\.\.\\"]
-            for pattern in patterns:
-                if re.search(pattern, command):
-                    return "Path traversal detected (../ pattern)."
-
-        # Check for system file access
-        protected_paths = ["/etc/", "~/.ssh/", "~/.config/", "/sys/", "/proc/"]
-        for protected in protected_paths:
-            expanded = str(Path(protected).expanduser()) if "~" in protected else protected
-            if expanded in command:
-                return f"Access to protected path '{protected}' is not allowed in sandbox mode."
-
-        return None
 
     async def execute(self, command: str) -> ShellResult:
         """Execute a shell command asynchronously.
@@ -138,9 +103,7 @@ class ShellExecutor:
             return check
 
         # Determine working directory
-        cwd = self.workspace
-        if self.sandbox_mode in ("confined", "restricted"):
-            cwd = self.workspace  # Always lock to workspace
+        cwd = self.sandbox.get_cwd()
 
         try:
             process = await asyncio.create_subprocess_shell(

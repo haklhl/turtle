@@ -28,7 +28,7 @@ class AnthropicProvider(BaseLLMProvider):
             for t in tools
         ]
 
-    def _extract_messages(self, messages: list[dict[str, str]]) -> tuple[str, list[dict]]:
+    def _extract_messages(self, messages: list[dict[str, Any]]) -> tuple[str, list[dict]]:
         """Separate system message from conversation messages.
 
         Returns:
@@ -48,11 +48,23 @@ class AnthropicProvider(BaseLLMProvider):
                         "content": [
                             {
                                 "type": "tool_result",
-                                "tool_use_id": msg.get("tool_use_id", ""),
+                                "tool_use_id": msg.get("tool_call_id", ""),
                                 "content": msg["content"],
                             }
                         ],
                     })
+                elif role == "assistant" and msg.get("tool_calls"):
+                    content_blocks = []
+                    if msg.get("content"):
+                        content_blocks.append({"type": "text", "text": msg["content"]})
+                    for tc in msg["tool_calls"]:
+                        content_blocks.append({
+                            "type": "tool_use",
+                            "id": tc.get("id", ""),
+                            "name": tc["name"],
+                            "input": tc.get("arguments", {}),
+                        })
+                    conversation.append({"role": "assistant", "content": content_blocks})
                 else:
                     conversation.append({"role": role, "content": msg["content"]})
 
@@ -78,6 +90,7 @@ class AnthropicProvider(BaseLLMProvider):
         max_output_tokens: int = 8192,
         tools: list[ToolDefinition] | None = None,
         tool_choice: str = "auto",
+        metadata: dict[str, Any] | None = None,
     ) -> LLMResponse:
         system_prompt, conversation = self._extract_messages(messages)
 
@@ -125,6 +138,7 @@ class AnthropicProvider(BaseLLMProvider):
         model: str,
         temperature: float = 0.7,
         max_output_tokens: int = 8192,
+        metadata: dict[str, Any] | None = None,
     ):
         system_prompt, conversation = self._extract_messages(messages)
 

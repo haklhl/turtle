@@ -51,8 +51,16 @@ XAI_MODELS: list[ModelInfo] = [
     ModelInfo("grok-3-mini", "xai", 131_072, 0.30, 0.50, "Fast Grok"),
 ]
 
+# --- Local / Codex CLI ---
+CODEX_MODELS: list[ModelInfo] = [
+    ModelInfo("codex-oss", "codex", 0, 0.0, 0.0, "Local Codex CLI with OSS provider", supports_tools=False),
+    ModelInfo("codex-cloud", "codex", 0, 0.0, 0.0, "Codex CLI with logged-in cloud account", supports_tools=False),
+    ModelInfo("codex-5.4", "codex", 0, 0.0, 0.0, "Codex CLI pinned to gpt-5.4", supports_tools=False),
+    ModelInfo("codex-spark", "codex", 0, 0.0, 0.0, "Codex CLI pinned to spark tier", supports_tools=False),
+]
+
 # --- All preset models ---
-ALL_MODELS: list[ModelInfo] = GOOGLE_MODELS + OPENAI_MODELS + ANTHROPIC_MODELS + XAI_MODELS
+ALL_MODELS: list[ModelInfo] = GOOGLE_MODELS + OPENAI_MODELS + ANTHROPIC_MODELS + XAI_MODELS + CODEX_MODELS
 
 # --- Lookup maps ---
 MODEL_BY_NAME: dict[str, ModelInfo] = {m.name: m for m in ALL_MODELS}
@@ -60,7 +68,7 @@ MODELS_BY_PROVIDER: dict[str, list[ModelInfo]] = {}
 for _m in ALL_MODELS:
     MODELS_BY_PROVIDER.setdefault(_m.provider, []).append(_m)
 
-SUPPORTED_PROVIDERS = ["google", "openai", "anthropic", "openrouter", "xai"]
+SUPPORTED_PROVIDERS = ["google", "openai", "anthropic", "openrouter", "xai", "codex"]
 
 
 def get_model_info(model_name: str) -> ModelInfo | None:
@@ -120,6 +128,8 @@ def resolve_provider(model_name: str, default_provider: str = "google") -> str:
         return "anthropic"
     elif model_name.startswith("grok"):
         return "xai"
+    elif model_name.startswith("codex"):
+        return "codex"
     elif "/" in model_name:
         return "openrouter"
 

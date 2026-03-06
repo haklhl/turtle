@@ -48,6 +48,14 @@ Sea Turtle 使用 JSON 格式配置文件，默认位置：`~/.sea_turtle/config
 | `compress_target_ratio` | float | `0.3` | 压缩后目标大小（占 max_tokens 比例） |
 | `compress_model` | string | `"gemini-2.0-flash"` | 用于压缩摘要的模型 |
 
+## conversation_persistence — 会话持久化
+
+| 参数 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `enabled` | bool | `true` | 是否启用会话持久化 |
+| `persist_codex_sessions` | bool | `true` | 是否把 Codex CLI 会话 ID 落盘 |
+| `codex_session_file` | string | `".codex_sessions.json"` | Agent workspace 下的 Codex 会话映射文件 |
+
 ## shell — Shell 执行
 
 | 参数 | 类型 | 默认值 | 说明 |
@@ -68,7 +76,10 @@ Sea Turtle 使用 JSON 格式配置文件，默认位置：`~/.sea_turtle/config
 |------|------|--------|------|
 | `enabled` | bool | `false` | 是否启用 |
 | `bot_token_env` | string | — | Bot Token 环境变量名 |
+| `default_allowed_user_ids` | list | `[]` | 所有 Agent 的默认 allowlist |
+| `default_owner_ids` | list | `[]` | 所有 Agent 的默认 owner 列表 |
 | `allowed_user_ids` | list | `[]` | 允许的用户 ID（空=全部允许） |
+| `owner_user_ids` | list | `[]` | 允许执行敏感命令的 owner ID |
 
 ## heartbeat — 心跳
 

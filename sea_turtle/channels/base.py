@@ -70,7 +70,10 @@ class BaseChannel(abc.ABC):
         """
         agent_cfg = self.config.get("agents", {}).get(agent_id, {})
         channel_cfg = agent_cfg.get(channel_type, {})
+        global_cfg = self.config.get(channel_type, {})
         allowed = channel_cfg.get("allowed_user_ids", [])
+        if not allowed:
+            allowed = global_cfg.get("default_allowed_user_ids", [])
         if not allowed:
             return True  # Empty list = allow all
         return user_id in allowed
@@ -88,5 +91,8 @@ class BaseChannel(abc.ABC):
         """
         agent_cfg = self.config.get("agents", {}).get(agent_id, {})
         channel_cfg = agent_cfg.get(channel_type, {})
+        global_cfg = self.config.get(channel_type, {})
         owners = channel_cfg.get("owner_user_ids", [])
+        if not owners:
+            owners = global_cfg.get("default_owner_ids", [])
         return user_id in owners
