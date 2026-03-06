@@ -124,9 +124,6 @@ class CodexProvider(BaseLLMProvider):
             cmd.extend(["--model", resolved_model])
         if self.sandbox:
             cmd.extend(["--sandbox", self.sandbox])
-        if self.approval_policy:
-            cmd.extend(["--ask-for-approval", self.approval_policy])
-
         cmd.extend(["--skip-git-repo-check", "--json", "--output-last-message", output_file])
 
         if not self.persist_sessions:
@@ -179,14 +176,24 @@ class CodexProvider(BaseLLMProvider):
             except json.JSONDecodeError:
                 continue
             payload = event.get("payload", {})
-            if event.get("type") == "session_meta" and session_key:
-                session_id = payload.get("id") or session_id
+            event_type = event.get("type")
+            if event_type in {"session_meta", "thread.started"} and session_key:
+                session_id = (
+                    payload.get("id")
+                    or event.get("thread_id")
+                    or payload.get("thread_id")
+                    or session_id
+                )
                 if session_id:
                     self._session_cache[session_key] = session_id
                     self._save_session_cache()
-            elif event.get("type") == "token_count":
+            elif event_type == "token_count":
                 input_tokens = payload.get("input_tokens", input_tokens)
                 output_tokens = payload.get("output_tokens", output_tokens)
+            elif event_type == "turn.completed":
+                usage = event.get("usage", {})
+                input_tokens = usage.get("input_tokens", input_tokens)
+                output_tokens = usage.get("output_tokens", output_tokens)
 
         return LLMResponse(
             content=content,
