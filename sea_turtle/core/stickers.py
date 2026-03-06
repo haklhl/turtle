@@ -27,6 +27,7 @@ EMOJI_TO_EMOTION = {
     "💝": "warm",
     "🌹": "warm",
     "🎀": "warm",
+    "👋": "warm",
     "😊": "warm",
     "😄": "happy",
     "😃": "happy",
@@ -74,7 +75,11 @@ EMOJI_TO_EMOTION = {
     "😪": "tired",
     "💪": "supportive",
     "👍": "supportive",
+    "👏": "supportive",
+    "🙏": "supportive",
     "🙅‍♂️": "refuse",
+    "😴": "tired",
+    "😉": "playful",
 }
 
 
