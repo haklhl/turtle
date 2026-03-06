@@ -33,7 +33,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
                 "local_provider": "ollama",
                 "sandbox": "workspace-write",
                 "approval_policy": "never",
-                "persist_sessions": True,
+                "reasoning_effort": "medium",
+                "timeout_seconds": 300,
                 "extra_args": [],
             },
         },
@@ -46,8 +47,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     },
     "conversation_persistence": {
         "enabled": True,
-        "persist_codex_sessions": True,
-        "codex_session_file": ".codex_sessions.json",
+        "context_dir_name": ".contexts",
     },
     "shell": {
         "enabled": True,
@@ -67,6 +67,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "enabled": False,
         "bot_token": "",
         "bot_token_env": "TELEGRAM_BOT_TOKEN",
+        "attachment_retention_hours": 168,
         "default_allowed_user_ids": [],
         "default_owner_ids": [],
         "allowed_user_ids": [],
@@ -103,6 +104,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
             "model": "gemini-2.5-flash",
             "tools": ["shell", "memory", "task"],
             "sandbox": "confined",
+            "codex": {},
             "telegram": {
                 "bot_token": "",
                 "bot_token_env": "TELEGRAM_BOT_TOKEN",
@@ -232,6 +234,28 @@ def validate_config(config: dict) -> list[str]:
             issues.append(
                 f"WARNING: Agent '{agent_id}' has unknown sandbox mode '{sandbox}'. "
                 "Valid: normal, confined, restricted."
+            )
+
+        codex_cfg = agent_cfg.get("codex", {})
+        codex_sandbox = codex_cfg.get("sandbox")
+        if codex_sandbox and codex_sandbox not in ("read-only", "workspace-write", "danger-full-access"):
+            issues.append(
+                f"WARNING: Agent '{agent_id}' has unknown codex sandbox '{codex_sandbox}'. "
+                "Valid: read-only, workspace-write, danger-full-access."
+            )
+
+        reasoning_effort = codex_cfg.get("reasoning_effort")
+        if reasoning_effort and reasoning_effort not in ("minimal", "low", "medium", "high", "xhigh"):
+            issues.append(
+                f"WARNING: Agent '{agent_id}' has unknown codex reasoning_effort '{reasoning_effort}'. "
+                "Valid: minimal, low, medium, high, xhigh."
+            )
+
+        timeout_seconds = codex_cfg.get("timeout_seconds")
+        if timeout_seconds is not None and (not isinstance(timeout_seconds, int) or timeout_seconds <= 0):
+            issues.append(
+                f"WARNING: Agent '{agent_id}' has invalid codex timeout_seconds '{timeout_seconds}'. "
+                "Expected a positive integer."
             )
 
     llm_cfg = config.get("llm", {})

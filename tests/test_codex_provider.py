@@ -1,71 +1,37 @@
 import asyncio
-import json
-import tempfile
 import unittest
-from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import patch
 
 from sea_turtle.llm.codex import CodexProvider
 
 
-class FakeProcess:
-    def __init__(self, stdout: str, stderr: str = "", returncode: int = 0):
-        self._stdout = stdout.encode()
-        self._stderr = stderr.encode()
-        self.returncode = returncode
-
-    async def communicate(self):
-        return self._stdout, self._stderr
-
-
 class CodexProviderTests(unittest.TestCase):
-    def test_session_cache_is_persisted(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            output_path = Path(tmpdir) / "reply.txt"
-            session_file = Path(tmpdir) / ".codex_sessions.json"
-            output_path.write_text("done", encoding="utf-8")
+    def test_timeout_raises_user_friendly_message(self):
+        class SlowProcess:
+            returncode = 0
 
-            provider = CodexProvider(
-                command="codex",
-                workdir=tmpdir,
-                persist_sessions=True,
-                session_file=str(session_file),
-            )
+            async def communicate(self):
+                await asyncio.sleep(1)
+                return b"", b""
 
-            async def fake_exec(*cmd, **kwargs):
-                output_index = cmd.index("--output-last-message") + 1
-                Path(cmd[output_index]).write_text("done", encoding="utf-8")
-                return FakeProcess(stdout=json.dumps({
-                    "type": "session_meta",
-                    "payload": {"id": "sess-123"},
-                }))
+            def kill(self):
+                return None
 
-            async def run():
-                with patch("asyncio.create_subprocess_exec", fake_exec):
-                    return await provider.chat(
-                        messages=[{"role": "user", "content": "hi"}],
-                        model="codex-oss",
-                        metadata={"conversation_id": "telegram|chat:1|user:2"},
-                    )
+        provider = CodexProvider(command="codex", timeout_seconds=0)
 
-            response = asyncio.run(run())
-            self.assertEqual(response.content, "done")
-            self.assertTrue(session_file.exists())
-            data = json.loads(session_file.read_text(encoding="utf-8"))
-            self.assertEqual(data["telegram|chat:1|user:2"], "sess-123")
+        async def fake_exec(*args, **kwargs):
+            return SlowProcess()
 
-    def test_session_cache_loads_from_disk(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            session_file = Path(tmpdir) / ".codex_sessions.json"
-            session_file.write_text(json.dumps({"conv": "sess-abc"}), encoding="utf-8")
-            provider = CodexProvider(
-                command="codex",
-                workdir=tmpdir,
-                persist_sessions=True,
-                session_file=str(session_file),
-            )
-            self.assertEqual(provider._session_cache["conv"], "sess-abc")
+        async def run():
+            with patch("asyncio.create_subprocess_exec", fake_exec):
+                await provider._run_codex_command(
+                    prompt="hi",
+                    model="codex-5.4",
+                    output_file="/tmp/out.txt",
+                )
+
+        with self.assertRaisesRegex(RuntimeError, "命令超时"):
+            asyncio.run(run())
 
     def test_model_alias_maps_to_cli_model(self):
         provider = CodexProvider(command="codex")
@@ -73,7 +39,6 @@ class CodexProviderTests(unittest.TestCase):
             prompt="hi",
             model="codex-spark",
             output_file="/tmp/out.txt",
-            session_id=None,
         )
         self.assertIn("gpt-5.3-codex-spark", command)
 
@@ -83,12 +48,12 @@ class CodexProviderTests(unittest.TestCase):
             prompt="inspect image",
             model="codex-5.4",
             output_file="/tmp/out.txt",
-            session_id=None,
             image_paths=["/tmp/a.png", "/tmp/b.jpg"],
         )
         self.assertEqual(command.count("--image"), 2)
         self.assertIn("/tmp/a.png", command)
         self.assertIn("/tmp/b.jpg", command)
+        self.assertIn("--ephemeral", command)
 
     def test_prompt_includes_attachment_transcript(self):
         provider = CodexProvider(command="codex")
@@ -99,6 +64,27 @@ class CodexProviderTests(unittest.TestCase):
             tools=None,
         )
         self.assertIn("ATTACHMENTS: /tmp/demo.png", prompt)
+
+    def test_command_is_stateless(self):
+        provider = CodexProvider(
+            command="codex",
+            sandbox="danger-full-access",
+            workdir="/tmp/work",
+            reasoning_effort="high",
+        )
+        command = provider._build_command(
+            prompt="hello again",
+            model="codex-5.4",
+            output_file="/tmp/out.txt",
+            image_paths=["/tmp/demo.png"],
+        )
+        self.assertEqual(command[:2], ["codex", "exec"])
+        self.assertIn("--cd", command)
+        self.assertIn("/tmp/work", command)
+        self.assertIn('model_reasoning_effort="high"', command)
+        self.assertIn("--image", command)
+        self.assertIn("--sandbox", command)
+        self.assertIn("--ephemeral", command)
 
 
 if __name__ == "__main__":

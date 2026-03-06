@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import signal
+import time
 from multiprocessing import Queue
 from pathlib import Path
 from typing import Any
@@ -80,16 +81,21 @@ ALL_TOOLS = {
     "memory": [MEMORY_READ_TOOL, MEMORY_WRITE_TOOL],
     "task": [TASK_READ_TOOL],
 }
+IMAGE_ATTACHMENT_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
 
 
-def _create_llm_provider(config: dict, model: str, workspace: str | None = None) -> BaseLLMProvider:
+def _create_llm_provider(
+    config: dict,
+    model: str,
+    workspace: str | None = None,
+    agent_config: dict | None = None,
+) -> BaseLLMProvider:
     """Create the appropriate LLM provider based on model name and config."""
     from sea_turtle.config.loader import resolve_secret
 
     provider_name = resolve_provider(model, config.get("llm", {}).get("default_provider", "google"))
     providers_cfg = config.get("llm", {}).get("providers", {})
     provider_cfg = providers_cfg.get(provider_name, {})
-    persistence_cfg = config.get("conversation_persistence", {})
     api_key = resolve_secret(provider_cfg, "api_key", "api_key_env")
 
     if provider_name != "codex" and not api_key:
@@ -115,25 +121,40 @@ def _create_llm_provider(config: dict, model: str, workspace: str | None = None)
         return XAIProvider(api_key=api_key)
     elif provider_name == "codex":
         from sea_turtle.llm.codex import CodexProvider
+        agent_codex_cfg = (agent_config or {}).get("codex", {})
+        codex_sandbox = (
+            agent_codex_cfg.get("sandbox")
+            or _map_agent_sandbox_to_codex((agent_config or {}).get("sandbox"))
+            or provider_cfg.get("sandbox", "workspace-write")
+        )
+        reasoning_effort = agent_codex_cfg.get("reasoning_effort") or provider_cfg.get("reasoning_effort")
+        timeout_seconds = agent_codex_cfg.get("timeout_seconds") or provider_cfg.get("timeout_seconds", 300)
+
         return CodexProvider(
             api_key=api_key,
             command=provider_cfg.get("command", "codex"),
             workdir=workspace,
             use_oss=provider_cfg.get("use_oss", True),
             local_provider=provider_cfg.get("local_provider"),
-            sandbox=provider_cfg.get("sandbox", "workspace-write"),
+            sandbox=codex_sandbox,
             approval_policy=provider_cfg.get("approval_policy", "never"),
             profile=provider_cfg.get("profile"),
-            persist_sessions=(
-                provider_cfg.get("persist_sessions", True)
-                and persistence_cfg.get("enabled", True)
-                and persistence_cfg.get("persist_codex_sessions", True)
-            ),
-            session_file=str(Path(workspace or ".").resolve() / persistence_cfg.get("codex_session_file", ".codex_sessions.json")),
+            reasoning_effort=reasoning_effort,
+            timeout_seconds=timeout_seconds,
             extra_args=provider_cfg.get("extra_args", []),
         )
     else:
         raise ValueError(f"Unknown provider: {provider_name}")
+
+
+def _map_agent_sandbox_to_codex(agent_sandbox: str | None) -> str | None:
+    if agent_sandbox == "normal":
+        return "danger-full-access"
+    if agent_sandbox == "confined":
+        return "workspace-write"
+    if agent_sandbox == "restricted":
+        return "read-only"
+    return None
 
 
 class AgentWorker:
@@ -166,6 +187,10 @@ class AgentWorker:
         )
         self.llm: BaseLLMProvider | None = None
         self._running = False
+        self._request_count = 0
+        self._error_count = 0
+        self._total_processing_time_ms = 0
+        self._last_processing_time_ms = 0
 
     @staticmethod
     def _conversation_id(source: str, chat_id: Any = None, user_id: Any = None) -> str:
@@ -181,7 +206,17 @@ class AgentWorker:
         """Get or create a ContextManager for a specific conversation."""
         conversation_id = self._conversation_id(source, chat_id, user_id)
         if conversation_id not in self.contexts:
-            self.contexts[conversation_id] = ContextManager(self.config)
+            persistence_cfg = self.config.get("conversation_persistence", {})
+            context_dir_name = persistence_cfg.get("context_dir_name", ".contexts")
+            safe_name = (
+                conversation_id
+                .replace("/", "_")
+                .replace("\\", "_")
+                .replace(":", "_")
+                .replace("|", "__")
+            )
+            context_path = str(Path(self.workspace) / context_dir_name / f"{safe_name}.json")
+            self.contexts[conversation_id] = ContextManager(self.config, persistence_path=context_path)
         return conversation_id, self.contexts[conversation_id]
 
     def _get_tools(self) -> list[ToolDefinition]:
@@ -247,7 +282,12 @@ class AgentWorker:
     ) -> str:
         """Process a user message through the LLM with tool calling loop."""
         if not self.llm:
-            self.llm = _create_llm_provider(self.config, self.model, workspace=self.workspace)
+            self.llm = _create_llm_provider(
+                self.config,
+                self.model,
+                workspace=self.workspace,
+                agent_config=self.agent_config,
+            )
 
         # Get context for this channel
         conversation_id, context = self._get_context(source, chat_id, user_id)
@@ -263,6 +303,7 @@ class AgentWorker:
             skills_content=skills_content,
             memory_content=memory_content,
             rules_content=rules_content,
+            channel_name=source,
         )
         context.set_system_prompt(system_prompt)
         attachments = attachments or []
@@ -270,6 +311,10 @@ class AgentWorker:
         if attachments:
             attachment_lines = "\n".join(f"[Attachment: {path}]" for path in attachments)
             user_content = f"{user_message}\n\n{attachment_lines}".strip()
+        image_attachments = [
+            path for path in attachments
+            if Path(path).suffix.lower() in IMAGE_ATTACHMENT_SUFFIXES
+        ]
         context.add_message("user", user_content, attachments=attachments)
 
         # Check if compression needed
@@ -292,7 +337,7 @@ class AgentWorker:
                     "source": source,
                     "chat_id": chat_id,
                     "user_id": user_id,
-                    "image_paths": attachments,
+                    "image_paths": image_attachments,
                 },
             )
 
@@ -344,6 +389,8 @@ class AgentWorker:
                     user_text = msg.get("content", "")
                     source = msg.get("source", "unknown")
                     self.logger.info(f"Processing message from {source}: {user_text[:100]}...")
+                    started_at = time.monotonic()
+                    conversation_id, context = self._get_context(source, msg.get("chat_id"), msg.get("user_id"))
 
                     try:
                         self.logger.info(f"Calling LLM for message from {source}...")
@@ -354,6 +401,11 @@ class AgentWorker:
                             user_id=msg.get("user_id"),
                             attachments=msg.get("attachments", []),
                         )
+                        elapsed_ms = int((time.monotonic() - started_at) * 1000)
+                        self._request_count += 1
+                        self._last_processing_time_ms = elapsed_ms
+                        self._total_processing_time_ms += elapsed_ms
+                        context.record_response_time(elapsed_ms)
                         self.logger.info(f"LLM reply received ({len(reply) if reply else 0} chars), sending to outbox")
                         self.outbox.put({
                             "type": "reply",
@@ -362,9 +414,19 @@ class AgentWorker:
                             "source": source,
                             "chat_id": msg.get("chat_id"),
                             "user_id": msg.get("user_id"),
+                            "elapsed_ms": elapsed_ms,
                         })
-                        self.logger.info(f"Reply queued to outbox for {source}:{msg.get('chat_id')}")
+                        self.logger.info(
+                            f"Reply queued to outbox for {source}:{msg.get('chat_id')} "
+                            f"(elapsed={elapsed_ms}ms)"
+                        )
                     except Exception as e:
+                        elapsed_ms = int((time.monotonic() - started_at) * 1000)
+                        self._request_count += 1
+                        self._error_count += 1
+                        self._last_processing_time_ms = elapsed_ms
+                        self._total_processing_time_ms += elapsed_ms
+                        context.record_response_time(elapsed_ms)
                         self.logger.error(f"Error processing message: {e}", exc_info=True)
                         self.outbox.put({
                             "type": "reply",
@@ -373,6 +435,7 @@ class AgentWorker:
                             "source": source,
                             "chat_id": msg.get("chat_id"),
                             "user_id": msg.get("user_id"),
+                            "elapsed_ms": elapsed_ms,
                         })
 
                 elif msg_type == "set_model":
@@ -384,6 +447,12 @@ class AgentWorker:
                     for ctx in self.contexts.values():
                         ctx.add_message("assistant", f"[Model switched to {new_model}]")
                     self.logger.info(f"Model changed to: {new_model}")
+
+                elif msg_type == "set_effort":
+                    new_effort = msg.get("effort", "medium")
+                    self.agent_config.setdefault("codex", {})["reasoning_effort"] = new_effort
+                    self.llm = None  # Force re-creation with updated Codex settings
+                    self.logger.info(f"Codex reasoning effort changed to: {new_effort}")
 
                 elif msg_type == "reset_context":
                     source = msg.get("source", "unknown")
@@ -397,6 +466,20 @@ class AgentWorker:
                 elif msg_type == "get_stats":
                     source = msg.get("source", "unknown")
                     _, context = self._get_context(source, msg.get("chat_id"), msg.get("user_id"))
+                    rules_content = load_rules(self.workspace)
+                    skills_content = load_skills(self.workspace)
+                    memory_content = self.memory.read()
+                    context.set_system_prompt(
+                        build_system_prompt(
+                            agent_id=self.agent_id,
+                            agent_config=self.agent_config,
+                            shell_config=self.config.get("shell", {}),
+                            skills_content=skills_content,
+                            memory_content=memory_content,
+                            rules_content=rules_content,
+                            channel_name=source,
+                        )
+                    )
                     stats = {
                         "context": context.get_stats(),
                         "token_usage": self.token_counter.get_session_usage(),
@@ -406,6 +489,23 @@ class AgentWorker:
                         "type": "stats",
                         "agent_id": self.agent_id,
                         "data": stats,
+                        "request_id": msg.get("request_id"),
+                    })
+
+                elif msg_type == "get_runtime_status":
+                    avg_processing_time_ms = (
+                        self._total_processing_time_ms / self._request_count
+                        if self._request_count > 0 else 0
+                    )
+                    self.outbox.put({
+                        "type": "runtime_status",
+                        "agent_id": self.agent_id,
+                        "data": {
+                            "request_count": self._request_count,
+                            "error_count": self._error_count,
+                            "last_processing_time_ms": self._last_processing_time_ms,
+                            "avg_processing_time_ms": avg_processing_time_ms,
+                        },
                         "request_id": msg.get("request_id"),
                     })
 

@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import math
 import os
 import signal
 import sys
@@ -14,10 +15,28 @@ from sea_turtle.core.agent import AgentManager
 from sea_turtle.core.heartbeat import Heartbeat
 from sea_turtle.core.token_counter import TokenCounter
 from sea_turtle.core.context import ContextManager
-from sea_turtle.llm.registry import list_models, format_model_list, get_model_info
+from sea_turtle.llm.registry import list_models, format_model_list, get_model_info, resolve_provider
 from sea_turtle.utils.logger import get_daemon_logger
 
 logger: logging.Logger | None = None
+
+
+def _format_ms(elapsed_ms: float | int | None) -> str:
+    """Format elapsed milliseconds for human-readable status output."""
+    if elapsed_ms is None:
+        return "N/A"
+    try:
+        value = max(0, int(elapsed_ms))
+    except (TypeError, ValueError):
+        return "N/A"
+    if value < 1000:
+        return f"{value} ms"
+    seconds = value / 1000
+    if seconds < 60:
+        return f"{seconds:.1f} s"
+    minutes = math.floor(seconds / 60)
+    remaining = seconds - (minutes * 60)
+    return f"{minutes}m {remaining:.1f}s"
 
 
 class Daemon:
@@ -167,13 +186,20 @@ class Daemon:
                 "/status — Show agent status\n"
                 "/model list [provider] — List available models\n"
                 "/model <name> — Switch model\n"
+                "/effort list — List Codex reasoning efforts\n"
+                "/effort [minimal|low|medium|high|xhigh] — Show or set Codex reasoning effort\n"
                 "/help — Show this help"
             )
 
         elif cmd == "/reset":
             handle = self.agent_manager.get_handle(agent_id)
             if handle and handle.is_alive:
-                self.agent_manager.send_message(agent_id, {"type": "reset_context", "source": source})
+                self.agent_manager.send_message(agent_id, {
+                    "type": "reset_context",
+                    "source": source,
+                    "chat_id": chat_id,
+                    "user_id": user_id,
+                })
                 return f"✅ Context reset for {source}."
             return "⚠️ Agent is not running."
 
@@ -184,15 +210,37 @@ class Daemon:
                 req_id = str(uuid.uuid4())
                 future = asyncio.get_event_loop().create_future()
                 self._pending_requests[req_id] = future
-                self.agent_manager.send_message(agent_id, {"type": "get_stats", "request_id": req_id, "source": source})
+                self.agent_manager.send_message(agent_id, {
+                    "type": "get_stats",
+                    "request_id": req_id,
+                    "source": source,
+                    "chat_id": chat_id,
+                    "user_id": user_id,
+                })
                 try:
                     resp = await asyncio.wait_for(future, timeout=10.0)
                     data = resp["data"]
                     ctx = data.get("context", {})
+                    agent_cfg = get_agent_config(self.config, agent_id) or {}
+                    provider = resolve_provider(
+                        data.get("model", agent_cfg.get("model", self.config.get("llm", {}).get("default_model", ""))),
+                        self.config.get("llm", {}).get("default_provider", "google"),
+                    )
+                    effort_line = ""
+                    if provider == "codex":
+                        effort = (
+                            agent_cfg.get("codex", {}).get("reasoning_effort")
+                            or self.config.get("llm", {}).get("providers", {}).get("codex", {}).get("reasoning_effort", "medium")
+                        )
+                        effort_line = f"\n  Reasoning Effort: {effort}"
                     return (
                         f"📊 Context Stats:\n"
                         f"  Model: {data.get('model', '?')}\n"
+                        f"  Provider: {provider}{effort_line}\n"
                         f"  Messages: {ctx.get('message_count', 0)}\n"
+                        f"  Requests: {ctx.get('request_count', 0)}\n"
+                        f"  Last Reply: {_format_ms(ctx.get('last_response_time_ms', 0))}\n"
+                        f"  Avg Reply: {_format_ms(ctx.get('avg_response_time_ms', 0))}\n"
                         f"  System Prompt: ~{ctx.get('system_prompt_tokens', 0):,} tokens\n"
                         f"  Conversation: ~{ctx.get('message_tokens', 0):,} tokens\n"
                         f"  Total: ~{ctx.get('estimated_tokens', 0):,} / {ctx.get('max_tokens', 0):,} ({ctx.get('usage_ratio', 0):.1%})\n"
@@ -221,9 +269,52 @@ class Daemon:
             if handle:
                 status = "🟢 Running" if handle.is_alive else "🔴 Stopped"
                 uptime_min = handle.uptime / 60
+                agent_cfg = get_agent_config(self.config, agent_id) or {}
+                provider = resolve_provider(
+                    agent_cfg.get("model", self.config.get("llm", {}).get("default_model", "")),
+                    self.config.get("llm", {}).get("default_provider", "google"),
+                )
+                codex_cfg = agent_cfg.get("codex", {})
+                codex_lines = ""
+                if provider == "codex":
+                    codex_lines = (
+                        f"\n  Codex Sandbox: {codex_cfg.get('sandbox') or self.config.get('llm', {}).get('providers', {}).get('codex', {}).get('sandbox', 'workspace-write')}"
+                        f"\n  Reasoning Effort: {codex_cfg.get('reasoning_effort') or self.config.get('llm', {}).get('providers', {}).get('codex', {}).get('reasoning_effort', 'medium')}"
+                        f"\n  Timeout: {codex_cfg.get('timeout_seconds') or self.config.get('llm', {}).get('providers', {}).get('codex', {}).get('timeout_seconds', 300)}s"
+                    )
+                runtime_lines = ""
+                if handle.is_alive:
+                    req_id = None
+                    try:
+                        import uuid
+                        req_id = str(uuid.uuid4())
+                        future = asyncio.get_event_loop().create_future()
+                        self._pending_requests[req_id] = future
+                        self.agent_manager.send_message(agent_id, {
+                            "type": "get_runtime_status",
+                            "request_id": req_id,
+                        })
+                        resp = await asyncio.wait_for(future, timeout=5.0)
+                        runtime = resp.get("data", {})
+                        runtime_lines = (
+                            f"\n  Requests: {runtime.get('request_count', 0)}"
+                            f"\n  Errors: {runtime.get('error_count', 0)}"
+                            f"\n  Last Reply: {_format_ms(runtime.get('last_processing_time_ms', 0))}"
+                            f"\n  Avg Reply: {_format_ms(runtime.get('avg_processing_time_ms', 0))}"
+                        )
+                    except asyncio.TimeoutError:
+                        runtime_lines = "\n  Timing: unavailable (status request timed out)"
+                    finally:
+                        if req_id:
+                            self._pending_requests.pop(req_id, None)
                 return (
                     f"🐢 Agent: {agent_id}\n"
                     f"  Status: {status}\n"
+                    f"  Name: {agent_cfg.get('name', 'Turtle')}\n"
+                    f"  Model: {agent_cfg.get('model', '?')} ({provider})\n"
+                    f"  Sandbox: {agent_cfg.get('sandbox', 'confined')}\n"
+                    f"  Workspace: {agent_cfg.get('workspace', '~/.sea_turtle/agents/default')}"
+                    f"{codex_lines}{runtime_lines}\n"
                     f"  PID: {handle.pid or 'N/A'}\n"
                     f"  Uptime: {uptime_min:.1f} min\n"
                     f"  Restarts: {handle.restart_count}"
@@ -254,6 +345,41 @@ class Daemon:
                 return "⚠️ Agent is not running."
             else:
                 return "Usage: /model list [provider] or /model <model_name>"
+
+        elif cmd == "/effort":
+            agent_cfg = get_agent_config(self.config, agent_id) or {}
+            codex_cfg = agent_cfg.setdefault("codex", {})
+            current_effort = codex_cfg.get("reasoning_effort") or self.config.get("llm", {}).get("providers", {}).get("codex", {}).get("reasoning_effort", "medium")
+            if len(parts) >= 2 and parts[1].lower() == "list":
+                return (
+                    "🧠 Available Codex reasoning efforts:\n"
+                    "- minimal\n- low\n- medium\n- high\n- xhigh\n"
+                    f"\nCurrent: {current_effort}"
+                )
+            if len(parts) == 1:
+                provider = resolve_provider(agent_cfg.get("model", self.config.get("llm", {}).get("default_model", "")), self.config.get("llm", {}).get("default_provider", "google"))
+                note = "" if provider == "codex" else "\n⚠️ 当前模型不是 Codex，修改后要切回 Codex 模型才会生效。"
+                return f"🧠 Current Codex reasoning effort: {current_effort}{note}"
+
+            new_effort = parts[1].lower()
+            if new_effort not in {"minimal", "low", "medium", "high", "xhigh"}:
+                return "Usage: /effort [minimal|low|medium|high|xhigh]"
+
+            codex_cfg["reasoning_effort"] = new_effort
+            if self.config_path and agent_id in self.config.get("agents", {}):
+                self.config["agents"][agent_id].setdefault("codex", {})["reasoning_effort"] = new_effort
+                try:
+                    save_config(self.config, self.config_path)
+                except Exception as e:
+                    logger.error(f"Failed to save config: {e}")
+
+            handle = self.agent_manager.get_handle(agent_id)
+            if handle and handle.is_alive:
+                self.agent_manager.send_message(agent_id, {"type": "set_effort", "effort": new_effort})
+
+            provider = resolve_provider(agent_cfg.get("model", self.config.get("llm", {}).get("default_model", "")), self.config.get("llm", {}).get("default_provider", "google"))
+            note = "" if provider == "codex" else "\n⚠️ 当前模型不是 Codex，已保存，但只有切回 Codex 模型后才会生效。"
+            return f"✅ Codex reasoning effort set to: {new_effort}{note}"
 
         return f"Unknown command: {cmd}. Type /help for available commands."
 
@@ -370,6 +496,7 @@ class Daemon:
     async def _send_telegram_reply(self, chat_id, content, agent_id: str, attachments: list[str] | None = None):
         """Send reply via Telegram."""
         if self._telegram_channel:
+            await self._telegram_channel.stop_typing(chat_id, agent_id)
             if content:
                 await self._telegram_channel.send_message(chat_id, content, agent_id)
             if attachments:

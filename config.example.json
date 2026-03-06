@@ -40,7 +40,8 @@
         "local_provider": "ollama",
         "sandbox": "workspace-write",
         "approval_policy": "never",
-        "persist_sessions": true,
+        "reasoning_effort": "medium",
+        "timeout_seconds": 300,
         "extra_args": []
       }
     }
@@ -53,8 +54,7 @@
   },
   "conversation_persistence": {
     "enabled": true,
-    "persist_codex_sessions": true,
-    "codex_session_file": ".codex_sessions.json"
+    "context_dir_name": ".contexts"
   },
   "shell": {
     "enabled": true,
@@ -71,6 +71,7 @@
     "enabled": true,
     "bot_token": "your-telegram-bot-token-here",
     "bot_token_env": "TELEGRAM_BOT_TOKEN",
+    "attachment_retention_hours": 168,
     "default_allowed_user_ids": [],
     "default_owner_ids": [],
     "allowed_user_ids": [],
@@ -107,6 +108,11 @@
       "model": "gemini-2.5-flash",
       "tools": ["shell", "memory", "task"],
       "sandbox": "confined",
+      "codex": {
+        "sandbox": "workspace-write",
+        "reasoning_effort": "medium",
+        "timeout_seconds": 300
+      },
       "telegram": {
         "bot_token": "your-telegram-bot-token-here",
         "bot_token_env": "TELEGRAM_BOT_TOKEN",

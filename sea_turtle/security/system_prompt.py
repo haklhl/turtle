@@ -57,6 +57,7 @@ AGENT_CONTEXT_PROMPT = """\
 - Workspace: {workspace_path}
 - Current Model: {model_name}
 - Sandbox Mode: {sandbox_mode}
+- Current Channel: {channel_name}
 - Available Tools: {tools_list}
 - OS: {os_info}
 - Current Time: {current_time}
@@ -103,6 +104,7 @@ def build_system_prompt(
     skills_content: str = "",
     memory_content: str = "",
     rules_content: str = "",
+    channel_name: str = "unknown",
 ) -> str:
     """Build the complete system prompt for an agent.
 
@@ -147,6 +149,7 @@ def build_system_prompt(
         workspace_path=agent_config.get("workspace", "./agents/default"),
         model_name=agent_config.get("model", "gemini-2.5-flash"),
         sandbox_mode=agent_config.get("sandbox", "confined"),
+        channel_name=channel_name,
         tools_list=", ".join(tools) if tools else "none",
         os_info=os_info["os_info"],
         current_time=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),

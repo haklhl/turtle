@@ -3,10 +3,12 @@
 import asyncio
 import logging
 import os
+import time
 from pathlib import Path
 from typing import Any, TYPE_CHECKING
 
 from telegram import BotCommand, Update
+from telegram.constants import ChatAction
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -21,6 +23,14 @@ if TYPE_CHECKING:
     from sea_turtle.daemon import Daemon
 
 logger = logging.getLogger("sea_turtle.channels.telegram")
+IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
+ALLOWED_DOCUMENT_SUFFIXES = {
+    ".png", ".jpg", ".jpeg", ".webp", ".gif",
+    ".txt", ".md", ".pdf", ".json", ".csv", ".log",
+    ".py", ".js", ".ts", ".tsx", ".jsx", ".sh", ".yaml", ".yml",
+}
+DEFAULT_ATTACHMENT_RETENTION_HOURS = 24 * 7
+MAX_INBOUND_ATTACHMENT_BYTES = 50 * 1024 * 1024
 
 BOT_COMMANDS = [
     BotCommand("start", "🐢 启动 / 欢迎信息"),
@@ -30,7 +40,7 @@ BOT_COMMANDS = [
     BotCommand("usage", "💰 查看 Token 用量与费用"),
     BotCommand("status", "📋 查看 Agent 状态"),
     BotCommand("model", "🤖 查看/切换模型 (如 /model gpt-4o)"),
-    BotCommand("agent", "🔀 切换 Agent (如 /agent dev)"),
+    BotCommand("effort", "🧠 查看/切换 Codex 思考深度"),
     BotCommand("restart", "♻️ 重启当前 Agent"),
 ]
 
@@ -47,12 +57,14 @@ class TelegramChannel(BaseChannel):
         super().__init__(config, daemon)
         self.applications: dict[str, Application] = {}
         self._agent_bot_map: dict[str, str] = {}  # bot_token -> agent_id
+        self._typing_tasks: dict[tuple[str, Any], asyncio.Task] = {}
 
     async def start(self) -> None:
         """Start Telegram bot(s) for all configured agents."""
         seen_tokens: dict[str, str] = {}
 
         for agent_id, agent_cfg in self.config.get("agents", {}).items():
+            self._cleanup_old_attachments(agent_id)
             tg_cfg = agent_cfg.get("telegram", {})
 
             from sea_turtle.config.loader import resolve_secret
@@ -81,7 +93,7 @@ class TelegramChannel(BaseChannel):
             app.add_handler(CommandHandler("usage", self._make_command_handler(agent_id)))
             app.add_handler(CommandHandler("status", self._make_command_handler(agent_id)))
             app.add_handler(CommandHandler("model", self._make_command_handler(agent_id)))
-            app.add_handler(CommandHandler("agent", self._make_command_handler(agent_id)))
+            app.add_handler(CommandHandler("effort", self._make_command_handler(agent_id)))
 
             # Regular messages
             app.add_handler(MessageHandler(
@@ -89,7 +101,7 @@ class TelegramChannel(BaseChannel):
                 self._make_message_handler(agent_id),
             ))
             app.add_handler(MessageHandler(
-                filters.PHOTO | (filters.Document.IMAGE & ~filters.COMMAND),
+                filters.PHOTO | (filters.Document.ALL & ~filters.COMMAND),
                 self._make_message_handler(agent_id),
             ))
 
@@ -113,6 +125,7 @@ class TelegramChannel(BaseChannel):
         """Stop all Telegram bots."""
         for agent_id, app in self.applications.items():
             try:
+                await self.stop_typing(None, agent_id)
                 await app.updater.stop()
                 await app.stop()
                 await app.shutdown()
@@ -166,12 +179,49 @@ class TelegramChannel(BaseChannel):
                 continue
             try:
                 with path.open("rb") as f:
-                    if path.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp", ".gif"}:
+                    if path.suffix.lower() in IMAGE_SUFFIXES:
                         await app.bot.send_photo(chat_id=chat_id, photo=f)
                     else:
                         await app.bot.send_document(chat_id=chat_id, document=f)
             except Exception as e:
                 logger.error(f"Failed to send Telegram attachment '{path}': {e}")
+
+    async def start_typing(self, chat_id: Any, agent_id: str | None = None) -> None:
+        """Start a periodic Telegram typing indicator for a chat."""
+        key = (agent_id or "", chat_id)
+        if key in self._typing_tasks and not self._typing_tasks[key].done():
+            return
+
+        async def runner():
+            while True:
+                app = None
+                if agent_id and agent_id in self.applications:
+                    app = self.applications[agent_id]
+                elif self.applications:
+                    app = next(iter(self.applications.values()))
+                if not app or not app.bot:
+                    return
+                try:
+                    await app.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
+                except Exception as e:
+                    logger.debug(f"Failed to send typing action for {agent_id}:{chat_id}: {e}")
+                    return
+                await asyncio.sleep(4)
+
+        self._typing_tasks[key] = asyncio.create_task(runner())
+
+    async def stop_typing(self, chat_id: Any | None, agent_id: str | None = None) -> None:
+        """Stop a periodic Telegram typing indicator."""
+        keys = []
+        if chat_id is None:
+            keys = [key for key in self._typing_tasks if not agent_id or key[0] == (agent_id or "")]
+        else:
+            keys = [(agent_id or "", chat_id)]
+
+        for key in keys:
+            task = self._typing_tasks.pop(key, None)
+            if task:
+                task.cancel()
 
     def _make_command_handler(self, default_agent_id: str):
         """Create a command handler closure for a specific agent."""
@@ -213,9 +263,13 @@ class TelegramChannel(BaseChannel):
                 return
 
             text = update.message.text or update.message.caption or ""
-            attachments = await self._download_attachments(update, default_agent_id)
+            try:
+                attachments = await self._download_attachments(update, default_agent_id)
+            except ValueError as e:
+                await update.message.reply_text(str(e))
+                return
             if not text and attachments:
-                text = "Please inspect the attached image(s)."
+                text = "Please inspect the attached file(s)."
             success = self.daemon.route_message(
                 text=text,
                 agent_id=default_agent_id,
@@ -226,32 +280,69 @@ class TelegramChannel(BaseChannel):
             )
             if not success:
                 await update.message.reply_text("⚠️ Agent is not available. Try /restart.")
+                return
+            await self.start_typing(chat_id, default_agent_id)
 
         return handler
 
     async def _download_attachments(self, update: Update, agent_id: str) -> list[str]:
-        """Download incoming image attachments into the agent workspace."""
+        """Download incoming attachments into the agent workspace."""
         if not update.message:
             return []
 
-        workspace = self.config.get("agents", {}).get(agent_id, {}).get("workspace", "~/.sea_turtle/agents/default")
-        media_dir = Path(workspace).expanduser() / ".incoming" / "telegram"
+        self._cleanup_old_attachments(agent_id)
+        media_dir = self._incoming_dir(agent_id)
         media_dir.mkdir(parents=True, exist_ok=True)
 
         attachments: list[str] = []
         if update.message.photo:
             photo = update.message.photo[-1]
+            if photo.file_size and photo.file_size > MAX_INBOUND_ATTACHMENT_BYTES:
+                raise ValueError("⚠️ 附件超过 50MB，已拒绝下载。")
             file = await photo.get_file()
             path = media_dir / f"photo_{update.update_id}_{photo.file_unique_id}.jpg"
             await file.download_to_drive(custom_path=str(path))
             attachments.append(str(path))
 
         document = update.message.document
-        if document and document.mime_type and document.mime_type.startswith("image/"):
+        if document:
+            if document.file_size and document.file_size > MAX_INBOUND_ATTACHMENT_BYTES:
+                raise ValueError("⚠️ 附件超过 50MB，已拒绝下载。")
+            original_name = Path(document.file_name or "attachment.bin")
+            suffix = original_name.suffix or ".bin"
+            if suffix.lower() not in ALLOWED_DOCUMENT_SUFFIXES:
+                raise ValueError("⚠️ 当前仅允许上传常见图片、文本、代码、JSON、CSV、PDF、日志文件。")
             file = await document.get_file()
-            suffix = Path(document.file_name or "image.bin").suffix or ".bin"
-            path = media_dir / f"document_{update.update_id}_{document.file_unique_id}{suffix}"
+            safe_stem = original_name.stem.replace("/", "_").replace("\\", "_") or "attachment"
+            path = media_dir / f"document_{update.update_id}_{document.file_unique_id}_{safe_stem}{suffix}"
             await file.download_to_drive(custom_path=str(path))
             attachments.append(str(path))
 
         return attachments
+
+    def _incoming_dir(self, agent_id: str) -> Path:
+        workspace = self.config.get("agents", {}).get(agent_id, {}).get("workspace", "~/.sea_turtle/agents/default")
+        return Path(workspace).expanduser() / ".incoming" / "telegram"
+
+    def _cleanup_old_attachments(self, agent_id: str) -> None:
+        """Delete stale downloaded Telegram attachments from the agent workspace."""
+        media_dir = self._incoming_dir(agent_id)
+        if not media_dir.exists():
+            return
+
+        tg_cfg = self.config.get("telegram", {})
+        retention_hours = tg_cfg.get("attachment_retention_hours", DEFAULT_ATTACHMENT_RETENTION_HOURS)
+        try:
+            retention_seconds = max(int(retention_hours), 1) * 3600
+        except (TypeError, ValueError):
+            retention_seconds = DEFAULT_ATTACHMENT_RETENTION_HOURS * 3600
+
+        cutoff = time.time() - retention_seconds
+        for path in media_dir.rglob("*"):
+            try:
+                if not path.is_file():
+                    continue
+                if path.stat().st_mtime < cutoff:
+                    path.unlink()
+            except OSError as e:
+                logger.warning(f"Failed to clean attachment '{path}': {e}")

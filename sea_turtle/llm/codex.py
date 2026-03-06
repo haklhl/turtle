@@ -19,8 +19,8 @@ CODEX_MODEL_ALIASES = {
 class CodexProvider(BaseLLMProvider):
     """Run Codex CLI as the backing model provider.
 
-    This provider does not use API-key chat completions. It shells out to the local
-    `codex` CLI and optionally resumes a persisted Codex session per conversation.
+    This provider does not use API-key chat completions. Sea Turtle owns the
+    conversation state; each Codex CLI invocation is stateless.
     """
 
     def __init__(
@@ -33,8 +33,8 @@ class CodexProvider(BaseLLMProvider):
         sandbox: str = "workspace-write",
         approval_policy: str | None = None,
         profile: str | None = None,
-        persist_sessions: bool = True,
-        session_file: str | None = None,
+        reasoning_effort: str | None = None,
+        timeout_seconds: int = 300,
         extra_args: list[str] | None = None,
         **kwargs,
     ):
@@ -46,35 +46,9 @@ class CodexProvider(BaseLLMProvider):
         self.sandbox = sandbox
         self.approval_policy = approval_policy
         self.profile = profile
-        self.persist_sessions = persist_sessions
-        self.session_file = Path(session_file).expanduser() if session_file else None
+        self.reasoning_effort = reasoning_effort
+        self.timeout_seconds = timeout_seconds
         self.extra_args = extra_args or []
-        self._session_cache: dict[str, str] = self._load_session_cache()
-
-    def _load_session_cache(self) -> dict[str, str]:
-        """Load persisted conversation->session mappings from disk."""
-        if not self.persist_sessions or not self.session_file or not self.session_file.exists():
-            return {}
-        try:
-            data = json.loads(self.session_file.read_text(encoding="utf-8"))
-            if isinstance(data, dict):
-                return {str(k): str(v) for k, v in data.items()}
-        except (OSError, json.JSONDecodeError):
-            pass
-        return {}
-
-    def _save_session_cache(self) -> None:
-        """Persist conversation->session mappings to disk."""
-        if not self.persist_sessions or not self.session_file:
-            return
-        try:
-            self.session_file.parent.mkdir(parents=True, exist_ok=True)
-            self.session_file.write_text(
-                json.dumps(self._session_cache, indent=2, ensure_ascii=False) + "\n",
-                encoding="utf-8",
-            )
-        except OSError:
-            pass
 
     def _build_prompt(self, messages: list[dict[str, Any]], tools: list[ToolDefinition] | None) -> str:
         sections = [
@@ -111,12 +85,12 @@ class CodexProvider(BaseLLMProvider):
         prompt: str,
         model: str,
         output_file: str,
-        session_id: str | None,
         image_paths: list[str] | None = None,
     ) -> list[str]:
+        resolved_model = CODEX_MODEL_ALIASES.get(model, model)
         cmd = [self.command, "exec"]
-        if session_id:
-            cmd.extend(["resume", session_id])
+        if self.workdir:
+            cmd.extend(["--cd", self.workdir])
 
         if self.use_oss:
             cmd.append("--oss")
@@ -124,7 +98,8 @@ class CodexProvider(BaseLLMProvider):
             cmd.extend(["--local-provider", self.local_provider])
         if self.profile:
             cmd.extend(["--profile", self.profile])
-        resolved_model = CODEX_MODEL_ALIASES.get(model, model)
+        if self.reasoning_effort:
+            cmd.extend(["-c", f'model_reasoning_effort="{self.reasoning_effort}"'])
         if resolved_model:
             cmd.extend(["--model", resolved_model])
         if self.sandbox:
@@ -132,10 +107,7 @@ class CodexProvider(BaseLLMProvider):
         for image_path in image_paths or []:
             cmd.extend(["--image", image_path])
         cmd.extend(["--skip-git-repo-check", "--json", "--output-last-message", output_file])
-
-        if not self.persist_sessions:
-            cmd.append("--ephemeral")
-
+        cmd.append("--ephemeral")
         cmd.extend(self.extra_args)
         cmd.append(prompt)
         return cmd
@@ -151,29 +123,19 @@ class CodexProvider(BaseLLMProvider):
         metadata: dict[str, Any] | None = None,
     ) -> LLMResponse:
         prompt = self._build_prompt(messages, tools)
-        session_key = ""
         image_paths: list[str] = []
         if metadata:
-            session_key = metadata.get("conversation_id", "")
             image_paths = metadata.get("image_paths", []) or []
-        session_id = self._session_cache.get(session_key) if session_key else None
 
         with tempfile.NamedTemporaryFile(prefix="seaturtle-codex-", suffix=".txt", delete=False) as f:
             output_file = f.name
 
-        cmd = self._build_command(prompt, model, output_file, session_id, image_paths=image_paths)
-        process = await asyncio.create_subprocess_exec(
-            *cmd,
-            cwd=self.workdir,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+        stdout_text, stderr_text = await self._run_codex_command(
+            prompt=prompt,
+            model=model,
+            output_file=output_file,
+            image_paths=image_paths,
         )
-        stdout_bytes, stderr_bytes = await process.communicate()
-        stdout_text = stdout_bytes.decode("utf-8", errors="replace")
-        stderr_text = stderr_bytes.decode("utf-8", errors="replace")
-
-        if process.returncode != 0:
-            raise RuntimeError(stderr_text.strip() or f"Codex CLI exited with code {process.returncode}")
 
         content = Path(output_file).read_text(encoding="utf-8").strip() if Path(output_file).exists() else ""
 
@@ -186,17 +148,7 @@ class CodexProvider(BaseLLMProvider):
                 continue
             payload = event.get("payload", {})
             event_type = event.get("type")
-            if event_type in {"session_meta", "thread.started"} and session_key:
-                session_id = (
-                    payload.get("id")
-                    or event.get("thread_id")
-                    or payload.get("thread_id")
-                    or session_id
-                )
-                if session_id:
-                    self._session_cache[session_key] = session_id
-                    self._save_session_cache()
-            elif event_type == "token_count":
+            if event_type == "token_count":
                 input_tokens = payload.get("input_tokens", input_tokens)
                 output_tokens = payload.get("output_tokens", output_tokens)
             elif event_type == "turn.completed":
@@ -211,8 +163,36 @@ class CodexProvider(BaseLLMProvider):
             output_tokens=output_tokens,
             model=model,
             finish_reason="stop",
-            raw_response={"stdout": stdout_text, "stderr": stderr_text, "session_id": session_id},
+            raw_response={"stdout": stdout_text, "stderr": stderr_text},
         )
+
+    async def _run_codex_command(
+        self,
+        prompt: str,
+        model: str,
+        output_file: str,
+        image_paths: list[str] | None = None,
+    ) -> tuple[str, str]:
+        cmd = self._build_command(prompt, model, output_file, image_paths=image_paths)
+        process = await asyncio.create_subprocess_exec(
+            *cmd,
+            cwd=self.workdir,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        try:
+            stdout_bytes, stderr_bytes = await asyncio.wait_for(process.communicate(), timeout=self.timeout_seconds)
+        except asyncio.TimeoutError as exc:
+            process.kill()
+            await process.communicate()
+            raise RuntimeError(
+                f"命令超时（{self.timeout_seconds}秒）。建议切换到低思考深度，或改用 `codex-spark` 模型后重试。"
+            ) from exc
+        stdout_text = stdout_bytes.decode("utf-8", errors="replace")
+        stderr_text = stderr_bytes.decode("utf-8", errors="replace")
+        if process.returncode != 0:
+            raise RuntimeError(stderr_text.strip() or f"Codex CLI exited with code {process.returncode}")
+        return stdout_text, stderr_text
 
     async def chat_stream(
         self,
