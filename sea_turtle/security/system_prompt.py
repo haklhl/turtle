@@ -93,7 +93,7 @@ STICKER_GUIDANCE_SECTION = """\
 - Emotion stickers are enabled for this agent.
 - If your reply carries a visible emotion and a sticker would help, add one extra line at the end:
   `STICKER_EMOTION: warm`
-- Supported emotion labels depend on the local sticker library. Common labels include: warm, happy, embarrassed, angry, sad, calm, serious.
+- Supported emotion labels depend on the local sticker library. Common labels include: warm, happy, playful, embarrassed, angry, sad, calm, serious, surprised, tired, supportive, refuse.
 - Use at most one sticker per reply, and only when it matches your tone.
 """
 

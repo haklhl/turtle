@@ -35,6 +35,13 @@ class StickerRegistryTests(unittest.TestCase):
     def test_unknown_emoji_stays_unclassified(self):
         self.assertIsNone(infer_emotion_from_emoji("🧪"))
 
+    def test_new_extended_emotion_mappings(self):
+        self.assertEqual(infer_emotion_from_emoji("🤪"), "playful")
+        self.assertEqual(infer_emotion_from_emoji("😨"), "surprised")
+        self.assertEqual(infer_emotion_from_emoji("😪"), "tired")
+        self.assertEqual(infer_emotion_from_emoji("💪"), "supportive")
+        self.assertEqual(infer_emotion_from_emoji("🙅‍♂️"), "refuse")
+
     def test_load_backfills_emotion_for_existing_records(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "stickers.json"

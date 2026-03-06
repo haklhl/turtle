@@ -26,6 +26,7 @@ EMOJI_TO_EMOTION = {
     "💘": "warm",
     "💝": "warm",
     "🌹": "warm",
+    "🎀": "warm",
     "😊": "warm",
     "😄": "happy",
     "😃": "happy",
@@ -37,6 +38,9 @@ EMOJI_TO_EMOTION = {
     "😎": "happy",
     "🎉": "happy",
     "🥳": "happy",
+    "🤪": "playful",
+    "😛": "playful",
+    "💸": "playful",
     "😳": "embarrassed",
     "😅": "embarrassed",
     "🙈": "embarrassed",
@@ -56,6 +60,8 @@ EMOJI_TO_EMOTION = {
     "😞": "sad",
     "😔": "sad",
     "😿": "sad",
+    "😨": "surprised",
+    "😵": "surprised",
     "😐": "calm",
     "😶": "calm",
     "🙂‍↕️": "calm",
@@ -65,6 +71,10 @@ EMOJI_TO_EMOTION = {
     "🤔": "serious",
     "🧐": "serious",
     "😤": "serious",
+    "😪": "tired",
+    "💪": "supportive",
+    "👍": "supportive",
+    "🙅‍♂️": "refuse",
 }
 
 
