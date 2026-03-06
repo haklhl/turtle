@@ -15,6 +15,7 @@ class LLMResponse:
     model: str = ""
     finish_reason: str = ""
     raw_response: Any = None
+    attachments: list[str] = field(default_factory=list)
 
 
 @dataclass

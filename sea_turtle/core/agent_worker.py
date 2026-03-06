@@ -243,6 +243,7 @@ class AgentWorker:
         source: str = "unknown",
         chat_id: Any = None,
         user_id: Any = None,
+        attachments: list[str] | None = None,
     ) -> str:
         """Process a user message through the LLM with tool calling loop."""
         if not self.llm:
@@ -264,7 +265,12 @@ class AgentWorker:
             rules_content=rules_content,
         )
         context.set_system_prompt(system_prompt)
-        context.add_message("user", user_message)
+        attachments = attachments or []
+        user_content = user_message
+        if attachments:
+            attachment_lines = "\n".join(f"[Attachment: {path}]" for path in attachments)
+            user_content = f"{user_message}\n\n{attachment_lines}".strip()
+        context.add_message("user", user_content, attachments=attachments)
 
         # Check if compression needed
         if context.needs_compression():
@@ -286,6 +292,7 @@ class AgentWorker:
                     "source": source,
                     "chat_id": chat_id,
                     "user_id": user_id,
+                    "image_paths": attachments,
                 },
             )
 
@@ -345,6 +352,7 @@ class AgentWorker:
                             source,
                             chat_id=msg.get("chat_id"),
                             user_id=msg.get("user_id"),
+                            attachments=msg.get("attachments", []),
                         )
                         self.logger.info(f"LLM reply received ({len(reply) if reply else 0} chars), sending to outbox")
                         self.outbox.put({

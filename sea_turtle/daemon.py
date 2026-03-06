@@ -257,7 +257,15 @@ class Daemon:
 
         return f"Unknown command: {cmd}. Type /help for available commands."
 
-    def route_message(self, text: str, agent_id: str, source: str, chat_id: Any = None, user_id: Any = None) -> bool:
+    def route_message(
+        self,
+        text: str,
+        agent_id: str,
+        source: str,
+        chat_id: Any = None,
+        user_id: Any = None,
+        attachments: list[str] | None = None,
+    ) -> bool:
         """Route an incoming message to the appropriate handler.
 
         System commands (/ prefix) go to daemon, regular messages go to agent.
@@ -284,6 +292,7 @@ class Daemon:
             "source": source,
             "chat_id": chat_id,
             "user_id": user_id,
+            "attachments": attachments or [],
         })
 
     async def _handle_and_reply_command(self, command, agent_id, source, chat_id, user_id):
@@ -335,18 +344,36 @@ class Daemon:
         content = msg.get("content", "")
         chat_id = msg.get("chat_id")
         agent_id = msg.get("agent_id", "default")
+        payload = self._parse_reply_payload(content)
 
         if source == "telegram":
-            await self._send_telegram_reply(chat_id, content, agent_id)
+            await self._send_telegram_reply(chat_id, payload["text"], agent_id, payload["attachments"])
         elif source == "discord":
-            await self._send_discord_reply(chat_id, content, agent_id)
+            await self._send_discord_reply(chat_id, payload["text"], agent_id)
         else:
-            logger.debug(f"Reply to {source}: {content[:100]}")
+            logger.debug(f"Reply to {source}: {payload['text'][:100]}")
 
-    async def _send_telegram_reply(self, chat_id, content, agent_id: str):
+    @staticmethod
+    def _parse_reply_payload(content: str) -> dict[str, Any]:
+        """Parse simple attachment directives from assistant text."""
+        attachments = []
+        text_lines = []
+        for line in (content or "").splitlines():
+            if line.startswith("ATTACH:"):
+                path = line.split(":", 1)[1].strip()
+                if path:
+                    attachments.append(path)
+            else:
+                text_lines.append(line)
+        return {"text": "\n".join(text_lines).strip(), "attachments": attachments}
+
+    async def _send_telegram_reply(self, chat_id, content, agent_id: str, attachments: list[str] | None = None):
         """Send reply via Telegram."""
         if self._telegram_channel:
-            await self._telegram_channel.send_message(chat_id, content, agent_id)
+            if content:
+                await self._telegram_channel.send_message(chat_id, content, agent_id)
+            if attachments:
+                await self._telegram_channel.send_attachments(chat_id, attachments, agent_id)
         else:
             logger.warning(f"Telegram channel not available, cannot send reply to {chat_id}")
 

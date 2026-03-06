@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import os
+from pathlib import Path
 from typing import Any, TYPE_CHECKING
 
 from telegram import BotCommand, Update
@@ -87,6 +88,10 @@ class TelegramChannel(BaseChannel):
                 filters.TEXT & ~filters.COMMAND,
                 self._make_message_handler(agent_id),
             ))
+            app.add_handler(MessageHandler(
+                filters.PHOTO | (filters.Document.IMAGE & ~filters.COMMAND),
+                self._make_message_handler(agent_id),
+            ))
 
             self.applications[agent_id] = app
 
@@ -143,6 +148,31 @@ class TelegramChannel(BaseChannel):
             except Exception as e:
                 logger.error(f"Failed to send Telegram message: {e}")
 
+    async def send_attachments(self, chat_id: Any, attachments: list[str], agent_id: str | None = None) -> None:
+        """Send local image/file attachments to Telegram."""
+        app = None
+        if agent_id and agent_id in self.applications:
+            app = self.applications[agent_id]
+        elif self.applications:
+            app = next(iter(self.applications.values()))
+
+        if not app or not app.bot:
+            return
+
+        for attachment in attachments:
+            path = Path(attachment).expanduser()
+            if not path.exists():
+                logger.warning(f"Attachment not found, skipping: {path}")
+                continue
+            try:
+                with path.open("rb") as f:
+                    if path.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp", ".gif"}:
+                        await app.bot.send_photo(chat_id=chat_id, photo=f)
+                    else:
+                        await app.bot.send_document(chat_id=chat_id, document=f)
+            except Exception as e:
+                logger.error(f"Failed to send Telegram attachment '{path}': {e}")
+
     def _make_command_handler(self, default_agent_id: str):
         """Create a command handler closure for a specific agent."""
         async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -172,7 +202,7 @@ class TelegramChannel(BaseChannel):
     def _make_message_handler(self, default_agent_id: str):
         """Create a message handler closure for a specific agent."""
         async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-            if not update.message or not update.message.text:
+            if not update.message:
                 return
 
             user_id = update.effective_user.id if update.effective_user else 0
@@ -182,16 +212,46 @@ class TelegramChannel(BaseChannel):
                 await update.message.reply_text("⛔ You are not authorized to use this bot.")
                 return
 
-            text = update.message.text
+            text = update.message.text or update.message.caption or ""
+            attachments = await self._download_attachments(update, default_agent_id)
+            if not text and attachments:
+                text = "Please inspect the attached image(s)."
             success = self.daemon.route_message(
                 text=text,
                 agent_id=default_agent_id,
                 source="telegram",
                 chat_id=chat_id,
                 user_id=user_id,
+                attachments=attachments,
             )
             if not success:
                 await update.message.reply_text("⚠️ Agent is not available. Try /restart.")
 
         return handler
 
+    async def _download_attachments(self, update: Update, agent_id: str) -> list[str]:
+        """Download incoming image attachments into the agent workspace."""
+        if not update.message:
+            return []
+
+        workspace = self.config.get("agents", {}).get(agent_id, {}).get("workspace", "~/.sea_turtle/agents/default")
+        media_dir = Path(workspace).expanduser() / ".incoming" / "telegram"
+        media_dir.mkdir(parents=True, exist_ok=True)
+
+        attachments: list[str] = []
+        if update.message.photo:
+            photo = update.message.photo[-1]
+            file = await photo.get_file()
+            path = media_dir / f"photo_{update.update_id}_{photo.file_unique_id}.jpg"
+            await file.download_to_drive(custom_path=str(path))
+            attachments.append(str(path))
+
+        document = update.message.document
+        if document and document.mime_type and document.mime_type.startswith("image/"):
+            file = await document.get_file()
+            suffix = Path(document.file_name or "image.bin").suffix or ".bin"
+            path = media_dir / f"document_{update.update_id}_{document.file_unique_id}{suffix}"
+            await file.download_to_drive(custom_path=str(path))
+            attachments.append(str(path))
+
+        return attachments

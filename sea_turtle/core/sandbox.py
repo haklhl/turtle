@@ -7,6 +7,7 @@ Three sandbox levels:
 """
 
 import os
+import re
 import shlex
 from pathlib import Path
 
@@ -20,6 +21,8 @@ NETWORK_COMMANDS = {
     "curl", "wget", "nc", "ncat", "netcat", "ssh", "scp", "sftp",
     "ftp", "telnet", "ping", "traceroute", "nslookup", "dig", "host",
 }
+
+SHELL_LAUNCHERS = {"bash", "sh", "zsh", "fish", "dash", "ksh"}
 
 # Protected system paths (never writable in confined/restricted)
 PROTECTED_PATHS = [
@@ -66,17 +69,22 @@ class SandboxEnforcer:
             return None
 
         base_cmds = {os.path.basename(t) for t in tokens}
+        normalized_command = f" {command} "
 
         # Both confined and restricted: block process management
         blocked_procs = base_cmds & PROCESS_COMMANDS
         if blocked_procs:
             return f"Process management command not allowed in {self.mode} mode: {', '.join(blocked_procs)}"
+        if self._contains_blocked_terms(normalized_command, PROCESS_COMMANDS):
+            return f"Process management command not allowed in {self.mode} mode."
 
         # Restricted only: block network commands
         if self.mode == "restricted":
             blocked_net = base_cmds & NETWORK_COMMANDS
             if blocked_net:
                 return f"Network command not allowed in restricted mode: {', '.join(blocked_net)}"
+            if self._contains_blocked_terms(normalized_command, NETWORK_COMMANDS):
+                return "Network command not allowed in restricted mode."
 
         # Both confined and restricted: check path traversal
         if ".." in command:
@@ -87,6 +95,27 @@ class SandboxEnforcer:
             if protected in command:
                 return f"Access to protected path '{protected}' not allowed in sandbox mode."
 
+        # Block obvious nested-shell attempts such as `bash -lc 'kill 1'`.
+        if base_cmds & SHELL_LAUNCHERS:
+            nested_violation = self._check_nested_shell(command)
+            if nested_violation:
+                return nested_violation
+
+        return None
+
+    @staticmethod
+    def _contains_blocked_terms(command: str, blocked_terms: set[str]) -> bool:
+        for term in blocked_terms:
+            if re.search(rf"\b{re.escape(term)}\b", command):
+                return True
+        return False
+
+    def _check_nested_shell(self, command: str) -> str | None:
+        lowered = command.lower()
+        if self._contains_blocked_terms(lowered, PROCESS_COMMANDS):
+            return f"Nested shell process-management command not allowed in {self.mode} mode."
+        if self.mode == "restricted" and self._contains_blocked_terms(lowered, NETWORK_COMMANDS):
+            return "Nested shell network command not allowed in restricted mode."
         return None
 
     def check_file_access(self, file_path: str, write: bool = False) -> str | None:

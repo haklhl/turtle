@@ -92,11 +92,15 @@ class CodexProvider(BaseLLMProvider):
         for msg in messages:
             role = msg["role"].upper()
             content = msg.get("content", "")
+            attachments = msg.get("attachments", []) or []
             if msg.get("tool_calls"):
                 calls = ", ".join(tc["name"] for tc in msg["tool_calls"])
                 transcript.append(f"{role}: {content}\nTOOL_CALLS: {calls}")
             else:
-                transcript.append(f"{role}: {content}")
+                attachment_suffix = ""
+                if attachments:
+                    attachment_suffix = "\nATTACHMENTS: " + ", ".join(str(path) for path in attachments)
+                transcript.append(f"{role}: {content}{attachment_suffix}")
 
         sections.append("Conversation transcript:\n" + "\n\n".join(transcript))
         sections.append("Answer the latest user request. Do not mention internal implementation details unless asked.")
@@ -108,6 +112,7 @@ class CodexProvider(BaseLLMProvider):
         model: str,
         output_file: str,
         session_id: str | None,
+        image_paths: list[str] | None = None,
     ) -> list[str]:
         cmd = [self.command, "exec"]
         if session_id:
@@ -124,6 +129,8 @@ class CodexProvider(BaseLLMProvider):
             cmd.extend(["--model", resolved_model])
         if self.sandbox:
             cmd.extend(["--sandbox", self.sandbox])
+        for image_path in image_paths or []:
+            cmd.extend(["--image", image_path])
         cmd.extend(["--skip-git-repo-check", "--json", "--output-last-message", output_file])
 
         if not self.persist_sessions:
@@ -145,14 +152,16 @@ class CodexProvider(BaseLLMProvider):
     ) -> LLMResponse:
         prompt = self._build_prompt(messages, tools)
         session_key = ""
+        image_paths: list[str] = []
         if metadata:
             session_key = metadata.get("conversation_id", "")
+            image_paths = metadata.get("image_paths", []) or []
         session_id = self._session_cache.get(session_key) if session_key else None
 
         with tempfile.NamedTemporaryFile(prefix="seaturtle-codex-", suffix=".txt", delete=False) as f:
             output_file = f.name
 
-        cmd = self._build_command(prompt, model, output_file, session_id)
+        cmd = self._build_command(prompt, model, output_file, session_id, image_paths=image_paths)
         process = await asyncio.create_subprocess_exec(
             *cmd,
             cwd=self.workdir,
