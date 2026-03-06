@@ -68,6 +68,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "bot_token": "",
         "bot_token_env": "TELEGRAM_BOT_TOKEN",
         "attachment_retention_hours": 168,
+        "stickers_enabled": False,
         "default_allowed_user_ids": [],
         "default_owner_ids": [],
         "allowed_user_ids": [],
@@ -108,6 +109,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
             "telegram": {
                 "bot_token": "",
                 "bot_token_env": "TELEGRAM_BOT_TOKEN",
+                "stickers_enabled": False,
                 "allowed_user_ids": [],
                 "owner_user_ids": [],
             },

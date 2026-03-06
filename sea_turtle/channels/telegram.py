@@ -18,6 +18,7 @@ from telegram.ext import (
 )
 
 from sea_turtle.channels.base import BaseChannel
+from sea_turtle.core.stickers import register_sticker
 
 if TYPE_CHECKING:
     from sea_turtle.daemon import Daemon
@@ -37,6 +38,7 @@ BOT_COMMANDS = [
     BotCommand("help", "📖 显示帮助"),
     BotCommand("reset", "🔄 重置对话上下文"),
     BotCommand("context", "📊 查看上下文用量"),
+    BotCommand("prompt", "📜 查看当前 System Prompt"),
     BotCommand("tasks", "🗂️ 查看最近任务"),
     BotCommand("usage", "💰 查看 Token 用量与费用"),
     BotCommand("status", "📋 查看 Agent 状态"),
@@ -90,6 +92,7 @@ class TelegramChannel(BaseChannel):
             app.add_handler(CommandHandler("help", self._make_command_handler(agent_id)))
             app.add_handler(CommandHandler("reset", self._make_command_handler(agent_id)))
             app.add_handler(CommandHandler("context", self._make_command_handler(agent_id)))
+            app.add_handler(CommandHandler("prompt", self._make_command_handler(agent_id)))
             app.add_handler(CommandHandler("restart", self._make_command_handler(agent_id)))
             app.add_handler(CommandHandler("tasks", self._make_command_handler(agent_id)))
             app.add_handler(CommandHandler("usage", self._make_command_handler(agent_id)))
@@ -103,7 +106,7 @@ class TelegramChannel(BaseChannel):
                 self._make_message_handler(agent_id),
             ))
             app.add_handler(MessageHandler(
-                filters.PHOTO | (filters.Document.ALL & ~filters.COMMAND),
+                filters.PHOTO | filters.Sticker.ALL | (filters.Document.ALL & ~filters.COMMAND),
                 self._make_message_handler(agent_id),
             ))
 
@@ -188,6 +191,25 @@ class TelegramChannel(BaseChannel):
             except Exception as e:
                 logger.error(f"Failed to send Telegram attachment '{path}': {e}")
 
+    async def send_sticker(self, chat_id: Any, file_id: str, agent_id: str | None = None) -> None:
+        """Send a Telegram sticker by file_id."""
+        app = None
+        if agent_id and agent_id in self.applications:
+            app = self.applications[agent_id]
+        elif self.applications:
+            app = next(iter(self.applications.values()))
+
+        if app and app.bot:
+            try:
+                await app.bot.send_sticker(chat_id=chat_id, sticker=file_id)
+            except Exception as e:
+                logger.error(f"Failed to send Telegram sticker: {e}")
+
+    def _stickers_enabled(self, agent_id: str) -> bool:
+        agent_cfg = self.config.get("agents", {}).get(agent_id, {})
+        tg_cfg = agent_cfg.get("telegram", {})
+        return bool(tg_cfg.get("stickers_enabled", False))
+
     async def start_typing(self, chat_id: Any, agent_id: str | None = None) -> None:
         """Start a periodic Telegram typing indicator for a chat."""
         key = (agent_id or "", chat_id)
@@ -247,7 +269,13 @@ class TelegramChannel(BaseChannel):
                 user_id=user_id,
             )
             if reply:
-                await self.send_message(chat_id, reply, default_agent_id)
+                payload = self.daemon._parse_reply_payload(reply)
+                if payload["text"]:
+                    await self.send_message(chat_id, payload["text"], default_agent_id)
+                if payload["attachments"]:
+                    await self.send_attachments(chat_id, payload["attachments"], default_agent_id)
+                if payload.get("sticker_emotion"):
+                    await self.daemon._send_telegram_sticker(chat_id, default_agent_id, payload["sticker_emotion"])
 
         return handler
 
@@ -262,6 +290,21 @@ class TelegramChannel(BaseChannel):
 
             if not self._is_user_allowed(user_id, default_agent_id, "telegram"):
                 await update.message.reply_text("⛔ You are not authorized to use this bot.")
+                return
+
+            if update.message.sticker and self._stickers_enabled(default_agent_id):
+                agent_cfg = self.config.get("agents", {}).get(default_agent_id, {})
+                workspace = agent_cfg.get("workspace", "~/.sea_turtle/agents/default")
+                sticker = update.message.sticker
+                saved = register_sticker(
+                    workspace,
+                    file_id=sticker.file_id,
+                    file_unique_id=sticker.file_unique_id,
+                    emoji=sticker.emoji,
+                    set_name=sticker.set_name,
+                )
+                emotion = saved.get("emotion") or "未分类"
+                await update.message.reply_text(f"🗂️ 已记住这个 sticker。emotion: {emotion}")
                 return
 
             text = update.message.text or update.message.caption or ""

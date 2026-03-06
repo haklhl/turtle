@@ -88,6 +88,15 @@ TOOL_GUIDANCE_SECTION = """\
 - Ask for confirmation before any destructive or privilege-changing command.
 """
 
+STICKER_GUIDANCE_SECTION = """\
+## Telegram Sticker Guidance
+- Emotion stickers are enabled for this agent.
+- If your reply carries a visible emotion and a sticker would help, add one extra line at the end:
+  `STICKER_EMOTION: warm`
+- Supported emotion labels depend on the local sticker library. Common labels include: warm, happy, embarrassed, angry, sad, calm, serious.
+- Use at most one sticker per reply, and only when it matches your tone.
+"""
+
 
 def get_os_info() -> dict[str, str]:
     """Get current OS information."""
@@ -160,6 +169,9 @@ def build_system_prompt(
 
     # 3. Skills (only if non-empty)
     parts.append(TOOL_GUIDANCE_SECTION)
+    tg_cfg = agent_config.get("telegram", {})
+    if channel_name == "telegram" and tg_cfg.get("stickers_enabled", False):
+        parts.append(STICKER_GUIDANCE_SECTION)
 
     # 4. Skills (only if non-empty)
     skills_text = skills_content.strip()

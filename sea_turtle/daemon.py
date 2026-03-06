@@ -13,10 +13,14 @@ from typing import Any
 from sea_turtle.config.loader import load_config, get_agent_config, save_config
 from sea_turtle.core.agent import AgentManager
 from sea_turtle.core.heartbeat import Heartbeat
+from sea_turtle.core.memory import MemoryManager
+from sea_turtle.core.rules import load_rules, load_skills
+from sea_turtle.core.stickers import pick_sticker_for_emotion
 from sea_turtle.core.token_counter import TokenCounter
 from sea_turtle.core.context import ContextManager
 from sea_turtle.core.tasks import format_task_snapshot, list_recent_tasks, touch_tasks_for_heartbeat
 from sea_turtle.llm.registry import list_models, format_model_list, get_model_info, resolve_provider
+from sea_turtle.security.system_prompt import build_system_prompt
 from sea_turtle.utils.logger import get_daemon_logger
 
 logger: logging.Logger | None = None
@@ -66,6 +70,39 @@ class Daemon:
 
         global logger
         logger = get_daemon_logger(config)
+
+    def _is_owner_user(self, agent_id: str, source: str, user_id: Any) -> bool:
+        if user_id is None:
+            return False
+        agent_cfg = get_agent_config(self.config, agent_id) or {}
+        channel_cfg = agent_cfg.get(source, {}) if source in {"telegram", "discord"} else {}
+        global_cfg = self.config.get(source, {}) if source in {"telegram", "discord"} else {}
+        owners = channel_cfg.get("owner_user_ids") or global_cfg.get("default_owner_ids", [])
+        return int(user_id) in [int(owner) for owner in owners]
+
+    def _build_current_system_prompt(self, agent_id: str, source: str) -> str:
+        agent_cfg = get_agent_config(self.config, agent_id) or {}
+        workspace = agent_cfg.get("workspace", f"~/.sea_turtle/agents/{agent_id}")
+        memory = MemoryManager(workspace)
+        return build_system_prompt(
+            agent_id=agent_id,
+            agent_config=agent_cfg,
+            shell_config=self.config.get("shell", {}),
+            skills_content=load_skills(workspace),
+            memory_content=memory.read(),
+            rules_content=load_rules(workspace),
+            channel_name=source,
+        )
+
+    def _write_prompt_export(self, agent_id: str, source: str, prompt: str) -> str:
+        agent_cfg = get_agent_config(self.config, agent_id) or {}
+        workspace = Path(agent_cfg.get("workspace", f"~/.sea_turtle/agents/{agent_id}")).expanduser()
+        export_dir = workspace / ".exports"
+        export_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = Path(str(int(asyncio.get_event_loop().time() * 1000)))
+        export_path = export_dir / f"system-prompt-{source}-{timestamp.name}.txt"
+        export_path.write_text(prompt, encoding="utf-8")
+        return str(export_path)
 
     async def start(self) -> None:
         """Start the daemon: agents, channels, heartbeats."""
@@ -182,6 +219,7 @@ class Daemon:
                 "🐢 Sea Turtle Commands:\n"
                 "/reset — Reset conversation context\n"
                 "/context — Show context stats\n"
+                "/prompt — Show current final system prompt (owner only)\n"
                 "/tasks — Show recent tasks\n"
                 "/restart — Restart agent process\n"
                 "/usage — Show token usage & costs\n"
@@ -253,6 +291,16 @@ class Daemon:
                 finally:
                     self._pending_requests.pop(req_id, None)
             return "⚠️ Agent is not running."
+
+        elif cmd == "/prompt":
+            if not self._is_owner_user(agent_id, source, user_id):
+                return "⛔ Owner permission required."
+            prompt = self._build_current_system_prompt(agent_id, source)
+            export_path = self._write_prompt_export(agent_id, source, prompt)
+            return (
+                f"📜 Final system prompt export for `{source}`.\n"
+                f"ATTACH: {export_path}"
+            )
 
         elif cmd == "/tasks":
             workspace = (get_agent_config(self.config, agent_id) or {}).get("workspace", f"~/.sea_turtle/agents/{agent_id}")
@@ -494,7 +542,13 @@ class Daemon:
         payload = self._parse_reply_payload(content)
 
         if source == "telegram":
-            await self._send_telegram_reply(chat_id, payload["text"], agent_id, payload["attachments"])
+            await self._send_telegram_reply(
+                chat_id,
+                payload["text"],
+                agent_id,
+                payload["attachments"],
+                payload.get("sticker_emotion", ""),
+            )
         elif source == "discord":
             await self._send_discord_reply(chat_id, payload["text"], agent_id)
         elif source == "heartbeat":
@@ -506,17 +560,31 @@ class Daemon:
     def _parse_reply_payload(content: str) -> dict[str, Any]:
         """Parse simple attachment directives from assistant text."""
         attachments = []
+        sticker_emotion = ""
         text_lines = []
         for line in (content or "").splitlines():
             if line.startswith("ATTACH:"):
                 path = line.split(":", 1)[1].strip()
                 if path:
                     attachments.append(path)
+            elif line.startswith("STICKER_EMOTION:"):
+                sticker_emotion = line.split(":", 1)[1].strip()
             else:
                 text_lines.append(line)
-        return {"text": "\n".join(text_lines).strip(), "attachments": attachments}
+        return {
+            "text": "\n".join(text_lines).strip(),
+            "attachments": attachments,
+            "sticker_emotion": sticker_emotion,
+        }
 
-    async def _send_telegram_reply(self, chat_id, content, agent_id: str, attachments: list[str] | None = None):
+    async def _send_telegram_reply(
+        self,
+        chat_id,
+        content,
+        agent_id: str,
+        attachments: list[str] | None = None,
+        sticker_emotion: str = "",
+    ):
         """Send reply via Telegram."""
         if self._telegram_channel:
             await self._telegram_channel.stop_typing(chat_id, agent_id)
@@ -524,8 +592,27 @@ class Daemon:
                 await self._telegram_channel.send_message(chat_id, content, agent_id)
             if attachments:
                 await self._telegram_channel.send_attachments(chat_id, attachments, agent_id)
+            if sticker_emotion:
+                await self._send_telegram_sticker(chat_id, agent_id, sticker_emotion)
         else:
             logger.warning(f"Telegram channel not available, cannot send reply to {chat_id}")
+
+    async def _send_telegram_sticker(self, chat_id: Any, agent_id: str, emotion: str) -> None:
+        """Send one Telegram sticker for the requested emotion, or notify if missing."""
+        agent_cfg = get_agent_config(self.config, agent_id) or {}
+        tg_cfg = agent_cfg.get("telegram", {})
+        if not tg_cfg.get("stickers_enabled", False) or not self._telegram_channel:
+            return
+        workspace = agent_cfg.get("workspace", f"~/.sea_turtle/agents/{agent_id}")
+        sticker = pick_sticker_for_emotion(workspace, emotion)
+        if sticker:
+            await self._telegram_channel.send_sticker(chat_id, sticker["file_id"], agent_id)
+            return
+        await self._telegram_channel.send_message(
+            chat_id,
+            f"⚠️ 当前缺少 `{emotion}` 情绪的 sticker，请补一张贴纸给我记住。",
+            agent_id,
+        )
 
     async def _send_discord_reply(self, chat_id, content, agent_id: str):
         """Send reply via Discord."""

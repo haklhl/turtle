@@ -72,6 +72,7 @@
     "bot_token": "your-telegram-bot-token-here",
     "bot_token_env": "TELEGRAM_BOT_TOKEN",
     "attachment_retention_hours": 168,
+    "stickers_enabled": false,
     "default_allowed_user_ids": [],
     "default_owner_ids": [],
     "allowed_user_ids": [],
@@ -116,6 +117,7 @@
       "telegram": {
         "bot_token": "your-telegram-bot-token-here",
         "bot_token_env": "TELEGRAM_BOT_TOKEN",
+        "stickers_enabled": false,
         "allowed_user_ids": [],
         "owner_user_ids": []
       },
