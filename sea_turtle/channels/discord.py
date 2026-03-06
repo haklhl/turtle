@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger("sea_turtle.channels.discord")
 
 # Sensitive commands that require owner permission
-SENSITIVE_COMMANDS = {"/restart", "/reset", "/model", "/agent"}
+SENSITIVE_COMMANDS = {"/restart", "/reset", "/model", "/agent", "/prompt"}
 
 
 class DiscordChannel(BaseChannel):
@@ -233,6 +233,17 @@ class DiscordChannel(BaseChannel):
             )
             await interaction.response.send_message(reply, ephemeral=True)
 
+        @bot.tree.command(name="prompt", description="Show current final system prompt (owner only)")
+        async def cmd_prompt(interaction: discord.Interaction):
+            if not channel._is_owner(interaction.user.id, agent_id, "discord"):
+                await interaction.response.send_message("⛔ Owner permission required.", ephemeral=True)
+                return
+            reply = await channel.daemon.handle_system_command(
+                command="/prompt", agent_id=agent_id, source="discord",
+                chat_id=interaction.channel_id, user_id=interaction.user.id,
+            )
+            await interaction.response.send_message(reply, ephemeral=True)
+
         @bot.tree.command(name="usage", description="Show token usage and costs")
         async def cmd_usage(interaction: discord.Interaction):
             reply = await channel.daemon.handle_system_command(
@@ -320,4 +331,3 @@ class DiscordChannel(BaseChannel):
                 logger.info(f"Discord bot stopped for agent '{agent_id}'")
             except Exception as e:
                 logger.error(f"Error stopping Discord bot for '{agent_id}': {e}")
-
