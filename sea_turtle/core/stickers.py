@@ -14,26 +14,57 @@ EMOJI_TO_EMOTION = {
     "🙂": "warm",
     "😊": "warm",
     "☺️": "warm",
-    "🥰": "warm",
+    "😘": "warm",
     "😍": "warm",
+    "🥰": "warm",
+    "🤗": "warm",
     "❤️": "warm",
+    "♥️": "warm",
+    "💖": "warm",
+    "💕": "warm",
+    "💗": "warm",
+    "💘": "warm",
+    "💝": "warm",
+    "🌹": "warm",
+    "😊": "warm",
     "😄": "happy",
+    "😃": "happy",
+    "😀": "happy",
     "😁": "happy",
     "😆": "happy",
+    "😂": "happy",
     "🤣": "happy",
     "😎": "happy",
+    "🎉": "happy",
+    "🥳": "happy",
     "😳": "embarrassed",
     "😅": "embarrassed",
     "🙈": "embarrassed",
+    "🙊": "embarrassed",
+    "🫣": "embarrassed",
+    "😬": "embarrassed",
+    "☺": "embarrassed",
+    "🙈": "embarrassed",
     "😠": "angry",
     "😡": "angry",
+    "🤬": "angry",
+    "💢": "angry",
     "😭": "sad",
     "😢": "sad",
     "🥺": "sad",
+    "💔": "sad",
+    "😞": "sad",
+    "😔": "sad",
+    "😿": "sad",
     "😐": "calm",
     "😶": "calm",
+    "🙂‍↕️": "calm",
+    "👌": "calm",
     "🫡": "serious",
     "😌": "calm",
+    "🤔": "serious",
+    "🧐": "serious",
+    "😤": "serious",
 }
 
 
@@ -56,7 +87,22 @@ def load_sticker_data(workspace: str) -> dict[str, Any]:
     stickers = data.get("stickers", [])
     if not isinstance(stickers, list):
         stickers = []
-    return {"version": 1, "stickers": stickers}
+    normalized = []
+    changed = False
+    for sticker in stickers:
+        if not isinstance(sticker, dict):
+            continue
+        if not sticker.get("emotion"):
+            inferred = infer_emotion_from_emoji(sticker.get("emoji"))
+            if inferred:
+                sticker["emotion"] = inferred
+                sticker["updated_at"] = utc_now_iso()
+                changed = True
+        normalized.append(sticker)
+    payload = {"version": 1, "stickers": normalized}
+    if changed:
+        save_sticker_data(workspace, payload)
+    return payload
 
 
 def save_sticker_data(workspace: str, data: dict[str, Any]) -> None:
