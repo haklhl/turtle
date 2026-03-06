@@ -62,7 +62,7 @@ class Daemon:
         heartbeat_cfg = self.config.get("heartbeat", {})
         if heartbeat_cfg.get("enabled", True):
             for agent_id, agent_cfg in self.config.get("agents", {}).items():
-                workspace = str(Path(agent_cfg.get("workspace", f"./agents/{agent_id}")).resolve())
+                workspace = str(Path(agent_cfg.get("workspace", f"~/.sea_turtle/agents/{agent_id}")).expanduser().resolve())
                 hb = Heartbeat(
                     agent_id=agent_id,
                     workspace=workspace,

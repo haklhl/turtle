@@ -131,15 +131,14 @@ systemd/launchd (服务守护)
 ├── logs/                   # 日志
 │   ├── daemon.log
 │   └── agents/<id>/agent.log
+├── agents/                 # Agent 工作区（默认在仓库外）
+│   └── default/
+│       ├── rules.md
+│       ├── skills.md
+│       ├── memory.md
+│       ├── task.md
+│       └── .shell_history
 └── venv/                   # 虚拟环境
-
-agents/                     # Agent 工作区
-└── default/
-    ├── rules.md            # Agent 人设
-    ├── skills.md           # Agent 技能
-    ├── memory.md           # 持久记忆
-    ├── task.md             # 待办任务
-    └── .shell_history      # 命令历史
 ```
 
 ## ⚙️ 配置

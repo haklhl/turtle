@@ -99,7 +99,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "default": {
             "name": "Turtle",
             "human_name": "Human",
-            "workspace": "./agents/default",
+            "workspace": "~/.sea_turtle/agents/default",
             "model": "gemini-2.5-flash",
             "tools": ["shell", "memory", "task"],
             "sandbox": "confined",

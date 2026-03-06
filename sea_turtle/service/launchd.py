@@ -1,6 +1,7 @@
 """launchd service management for macOS."""
 
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -17,10 +18,7 @@ PLIST_TEMPLATE = """\
     <string>{label}</string>
     <key>ProgramArguments</key>
     <array>
-        <string>{python}</string>
-        <string>-m</string>
-        <string>sea_turtle</string>
-        <string>start</string>
+{program_args}
     </array>
     <key>WorkingDirectory</key>
     <string>{work_dir}</string>
@@ -47,14 +45,23 @@ PLIST_TEMPLATE = """\
 
 def _generate_plist() -> str:
     """Generate launchd plist content."""
-    work_dir = str(Path("~/.sea_turtle").expanduser())
-    log_dir = str(Path("~/.sea_turtle/logs").expanduser())
-    python = sys.executable
+    from sea_turtle.config.loader import find_config_file, load_config
+
+    config_path = str(Path(find_config_file() or "~/.sea_turtle/config.json").expanduser().resolve())
+    config = load_config(config_path)
+    work_dir = str(Path.cwd())
+    log_dir = str(Path(config.get("global", {}).get("data_dir", "~/.sea_turtle")).expanduser() / "logs")
+    executable = shutil.which("seaturtle")
+    if executable:
+        args = [executable, "-c", config_path, "start"]
+    else:
+        args = [sys.executable, "-m", "sea_turtle", "-c", config_path, "start"]
+    program_args = "\n".join(f"        <string>{arg}</string>" for arg in args)
     path = os.environ.get("PATH", "/usr/bin:/usr/local/bin")
 
     return PLIST_TEMPLATE.format(
         label=SERVICE_LABEL,
-        python=python,
+        program_args=program_args,
         work_dir=work_dir,
         log_dir=log_dir,
         path=path,
@@ -78,7 +85,7 @@ def install_launchd_service() -> None:
 
     # Ensure directories exist
     PLIST_PATH.parent.mkdir(parents=True, exist_ok=True)
-    log_dir = Path("~/.sea_turtle/logs").expanduser()
+    log_dir = Path(config.get("global", {}).get("data_dir", "~/.sea_turtle")).expanduser() / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
 
     try:

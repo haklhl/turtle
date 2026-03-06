@@ -100,6 +100,7 @@ BaseLLMProvider (抽象基类)
 
 1. **系统安全规范**（硬编码，不可覆盖）
 2. **Agent 环境信息**（自动注入：工作目录、模型、沙箱等）
-3. **Skills**（从 skills.md 加载，空则跳过）
-4. **Memory**（从 memory.md 加载）
-5. **Rules**（从 rules.md 加载，用户自定义）
+3. **Tool Guidance**（框架内置工具使用约束）
+4. **Skills**（从 skills.md 加载，空则跳过）
+5. **Memory**（从 memory.md 加载）
+6. **Rules**（从 rules.md 加载，用户自定义）

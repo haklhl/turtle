@@ -280,7 +280,8 @@ def _agent_add(args, config):
     model = args.model or config.get("llm", {}).get("default_model", "gemini-2.5-flash")
     sandbox = args.sandbox
 
-    workspace = f"./agents/{agent_id}"
+    data_dir = config.get("global", {}).get("data_dir", "~/.sea_turtle")
+    workspace = str(Path(data_dir).expanduser() / "agents" / agent_id)
 
     agent_cfg = {
         "name": name,
@@ -468,7 +469,7 @@ def cmd_doctor(args):
         print("  Config: ⚠️ Not found (run 'seaturtle onboard')")
 
     # Data directory
-    data_dir = Path("~/.sea_turtle").expanduser()
+    data_dir = Path(_load_cfg(args).get("global", {}).get("data_dir", "~/.sea_turtle")).expanduser()
     print(f"  Data dir: {'✅' if data_dir.exists() else '⚠️ Not created'} ({data_dir})")
 
 
@@ -477,7 +478,7 @@ def cmd_onboard(args):
     print(f"🐢 Welcome to Sea Turtle v{__version__} Setup!")
     print()
 
-    data_dir = Path("~/.sea_turtle").expanduser()
+    data_dir = Path(_load_cfg(args).get("global", {}).get("data_dir", "~/.sea_turtle")).expanduser()
     data_dir.mkdir(parents=True, exist_ok=True)
 
     config_file = data_dir / "config.json"
@@ -538,7 +539,7 @@ def cmd_onboard(args):
 
     # Init workspace
     from sea_turtle.core.rules import init_agent_workspace
-    workspace = Path("./agents/default")
+    workspace = data_dir / "agents" / "default"
     init_agent_workspace(str(workspace), agent_name=agent_name, human_name=human_name)
     print(f"✅ Agent workspace created: {workspace}")
 

@@ -1,6 +1,7 @@
 """systemd service management for Linux."""
 
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -18,7 +19,7 @@ Type=simple
 User={user}
 Group={group}
 WorkingDirectory={work_dir}
-ExecStart={python} -m sea_turtle start
+ExecStart={exec_start}
 Restart=on-failure
 RestartSec=10
 StandardOutput=journal
@@ -32,17 +33,24 @@ WantedBy=multi-user.target
 
 def _generate_unit() -> str:
     """Generate systemd unit file content."""
+    from sea_turtle.config.loader import find_config_file, load_config
+
     user = os.environ.get("USER", "root")
     group = user
-    work_dir = str(Path("~/.sea_turtle").expanduser())
-    python = sys.executable
+    config_path = str(Path(find_config_file() or "~/.sea_turtle/config.json").expanduser().resolve())
+    work_dir = str(Path.cwd())
+    executable = shutil.which("seaturtle")
+    if executable:
+        exec_start = f"{executable} -c {config_path} start"
+    else:
+        exec_start = f"{sys.executable} -m sea_turtle -c {config_path} start"
     path = os.environ.get("PATH", "/usr/bin:/usr/local/bin")
 
     return UNIT_TEMPLATE.format(
         user=user,
         group=group,
         work_dir=work_dir,
-        python=python,
+        exec_start=exec_start,
         path=path,
     )
 

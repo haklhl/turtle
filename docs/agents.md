@@ -29,7 +29,7 @@ seaturtle agent add myagent --name "My Agent" --model gpt-4o --sandbox confined
     "myagent": {
       "name": "My Agent",
       "human_name": "Human",
-      "workspace": "./agents/myagent",
+      "workspace": "~/.sea_turtle/agents/myagent",
       "model": "gpt-4o",
       "tools": ["shell", "memory", "task"],
       "sandbox": "confined",

@@ -71,7 +71,7 @@ class AgentManager:
             raise ValueError(f"Agent '{agent_id}' not found in configuration.")
 
         # Ensure workspace exists
-        workspace = agent_cfg.get("workspace", f"./agents/{agent_id}")
+        workspace = agent_cfg.get("workspace", f"~/.sea_turtle/agents/{agent_id}")
         init_agent_workspace(
             workspace,
             agent_name=agent_cfg.get("name", "Turtle"),
