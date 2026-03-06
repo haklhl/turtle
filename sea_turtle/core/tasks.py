@@ -11,7 +11,7 @@ from typing import Any
 TASK_FILE_NAME = "task.json"
 LEGACY_TASK_FILE_NAME = "task.md"
 ACTIVE_TASK_STATUSES = {"pending", "in_progress"}
-FINAL_TASK_STATUSES = {"done", "cancelled"}
+FINAL_TASK_STATUSES = {"done", "cancelled", "failed"}
 ALL_TASK_STATUSES = ACTIVE_TASK_STATUSES | FINAL_TASK_STATUSES
 
 
@@ -182,6 +182,37 @@ def apply_task_updates(workspace: str, updates: list[dict[str, Any]]) -> list[di
     if applied:
         save_task_data(workspace, data)
     return applied
+
+
+def create_task(
+    workspace: str,
+    title: str,
+    status: str = "pending",
+    notes: str = "",
+    result: str = "",
+) -> dict[str, Any]:
+    data = load_task_data(workspace)
+    next_id = f"task-{len(data['tasks']) + 1}"
+    now = utc_now_iso()
+    task = _normalize_task({
+        "id": next_id,
+        "title": title,
+        "status": status,
+        "notes": notes,
+        "result": result,
+        "created_at": now,
+        "updated_at": now,
+    }, len(data["tasks"]) + 1)
+    data["tasks"].append(task)
+    save_task_data(workspace, data)
+    return task
+
+
+def list_recent_tasks(workspace: str, limit: int = 20) -> list[dict[str, Any]]:
+    data = load_task_data(workspace)
+    tasks = data["tasks"][:]
+    tasks.sort(key=lambda task: (task.get("updated_at") or "", task.get("created_at") or ""), reverse=True)
+    return tasks[:limit]
 
 
 def extract_task_report(reply: str) -> tuple[str, dict[str, Any] | None]:

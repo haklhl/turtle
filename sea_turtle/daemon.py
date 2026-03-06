@@ -15,7 +15,7 @@ from sea_turtle.core.agent import AgentManager
 from sea_turtle.core.heartbeat import Heartbeat
 from sea_turtle.core.token_counter import TokenCounter
 from sea_turtle.core.context import ContextManager
-from sea_turtle.core.tasks import format_task_snapshot, touch_tasks_for_heartbeat
+from sea_turtle.core.tasks import format_task_snapshot, list_recent_tasks, touch_tasks_for_heartbeat
 from sea_turtle.llm.registry import list_models, format_model_list, get_model_info, resolve_provider
 from sea_turtle.utils.logger import get_daemon_logger
 
@@ -182,6 +182,7 @@ class Daemon:
                 "🐢 Sea Turtle Commands:\n"
                 "/reset — Reset conversation context\n"
                 "/context — Show context stats\n"
+                "/tasks — Show recent tasks\n"
                 "/restart — Restart agent process\n"
                 "/usage — Show token usage & costs\n"
                 "/status — Show agent status\n"
@@ -252,6 +253,25 @@ class Daemon:
                 finally:
                     self._pending_requests.pop(req_id, None)
             return "⚠️ Agent is not running."
+
+        elif cmd == "/tasks":
+            workspace = (get_agent_config(self.config, agent_id) or {}).get("workspace", f"~/.sea_turtle/agents/{agent_id}")
+            tasks = list_recent_tasks(workspace, limit=20)
+            if not tasks:
+                return "🗂️ 最近没有任务。"
+            lines = ["🗂️ Recent Tasks:"]
+            for task in tasks:
+                updated_at = (task.get("updated_at") or task.get("created_at") or "").replace("T", " ")
+                title = task.get("title", "").strip() or "(untitled)"
+                status = task.get("status", "pending")
+                result = task.get("result", "").strip()
+                line = f"- [{status}] {task.get('id', '?')} {title}"
+                if updated_at:
+                    line += f" ({updated_at})"
+                lines.append(line)
+                if result:
+                    lines.append(f"  result: {result[:160]}")
+            return "\n".join(lines)
 
         elif cmd == "/restart":
             try:

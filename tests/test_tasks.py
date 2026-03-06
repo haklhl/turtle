@@ -5,8 +5,10 @@ from pathlib import Path
 
 from sea_turtle.core.tasks import (
     apply_task_updates,
+    create_task,
     extract_task_report,
     list_actionable_tasks,
+    list_recent_tasks,
     load_task_data,
     save_task_data,
 )
@@ -37,6 +39,7 @@ class TaskStoreTests(unittest.TestCase):
                     {"id": "task-1", "title": "pending", "status": "pending"},
                     {"id": "task-2", "title": "working", "status": "in_progress"},
                     {"id": "task-3", "title": "done", "status": "done"},
+                    {"id": "task-4", "title": "failed", "status": "failed"},
                 ]
             })
 
@@ -72,6 +75,18 @@ class TaskStoreTests(unittest.TestCase):
         summary, report = extract_task_report(reply)
         self.assertIn("已完成 1 项", summary)
         self.assertEqual(report["updates"][0]["id"], "task-1")
+
+    def test_create_task_and_list_recent_tasks(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            workspace = Path(tmpdir)
+            first = create_task(str(workspace), "first task")
+            second = create_task(str(workspace), "second task", status="in_progress")
+            apply_task_updates(str(workspace), [{"id": first["id"], "status": "done", "result": "ok"}])
+
+            recent = list_recent_tasks(str(workspace), limit=2)
+            self.assertEqual(len(recent), 2)
+            self.assertEqual(recent[0]["id"], first["id"])
+            self.assertEqual(recent[1]["id"], second["id"])
 
 
 if __name__ == "__main__":

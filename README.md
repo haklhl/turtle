@@ -87,6 +87,7 @@ seaturtle install-service                # 注册系统服务
 | `/start` | 初始化 |
 | `/reset` | 重置上下文 |
 | `/context` | 查看上下文统计 |
+| `/tasks` | 查看最近 20 条任务 |
 | `/restart` | 重启 Agent |
 | `/usage` | Token 用量和费用 |
 | `/status` | Agent 状态 |
@@ -97,7 +98,7 @@ seaturtle install-service                # 注册系统服务
 | `/effort <level>` | 设置 Codex 思考深度 |
 | `/help` | 帮助 |
 
-Telegram 普通文本、图片、文件和带说明文字的附件消息都会转发给对应 Agent。入站附件会先下载到对应 agent workspace 下的 `.incoming/telegram/`，并按保留期自动清理。若 Agent 需要把本机已有图片或文件发回 Telegram，可在最终回复里输出一行 `ATTACH: /absolute/path/to/file`。`/model` 和 `/effort` 的切换会写回本地 `config.json`，因此重启后仍然生效。
+Telegram 普通文本、图片、文件和带说明文字的附件消息都会转发给对应 Agent。入站附件会先下载到对应 agent workspace 下的 `.incoming/telegram/`，并按保留期自动清理。若 Agent 需要把本机已有图片或文件发回 Telegram，可在最终回复里输出一行 `ATTACH: /absolute/path/to/file`。`/model` 和 `/effort` 的切换会写回本地 `config.json`，因此重启后仍然生效。Heartbeat 任务使用结构化 `task.json`，仅处理 `pending` / `in_progress`，完成后回写任务状态并向 owner 推送摘要。
 
 ## 🏗️ 架构
 

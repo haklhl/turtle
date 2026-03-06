@@ -83,6 +83,8 @@ TOOL_GUIDANCE_SECTION = """\
 - `shell`: Execute commands inside the workspace. Prefer direct inspection and minimal commands.
 - `memory`: Read or update long-lived notes in `memory.md` when the fact is worth persisting.
 - `task`: Read structured task state from `task.json` when the user asks about tasks or you need to continue queued work.
+- Task records live in `task.json` with fields like `id`, `title`, `status`, `result`, `notes`, `created_at`, and `updated_at`.
+- Use `create_task` to record new follow-up work for future heartbeats. Use `update_task` to mark progress or completion instead of inventing your own file format.
 - Ask for confirmation before any destructive or privilege-changing command.
 """
 

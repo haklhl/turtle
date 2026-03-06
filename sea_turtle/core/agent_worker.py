@@ -15,7 +15,7 @@ from sea_turtle.core.context import ContextManager
 from sea_turtle.core.memory import MemoryManager
 from sea_turtle.core.rules import load_rules, load_skills
 from sea_turtle.core.shell import ShellExecutor
-from sea_turtle.core.tasks import apply_task_updates, extract_task_report
+from sea_turtle.core.tasks import apply_task_updates, create_task, extract_task_report
 from sea_turtle.core.token_counter import TokenCounter
 from sea_turtle.llm.base import BaseLLMProvider, LLMResponse, ToolDefinition
 from sea_turtle.llm.registry import resolve_provider
@@ -77,10 +77,62 @@ TASK_READ_TOOL = ToolDefinition(
     },
 )
 
+TASK_CREATE_TOOL = ToolDefinition(
+    name="create_task",
+    description="Create a new structured task in task.json for future heartbeat processing.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "title": {
+                "type": "string",
+                "description": "Short task title describing the work to do.",
+            },
+            "notes": {
+                "type": "string",
+                "description": "Optional extra notes or acceptance criteria.",
+            },
+            "status": {
+                "type": "string",
+                "enum": ["pending", "in_progress", "done", "cancelled", "failed"],
+                "description": "Initial task status.",
+            },
+        },
+        "required": ["title"],
+    },
+)
+
+TASK_UPDATE_TOOL = ToolDefinition(
+    name="update_task",
+    description="Update one existing task in task.json by id.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "id": {
+                "type": "string",
+                "description": "Task id such as task-1.",
+            },
+            "status": {
+                "type": "string",
+                "enum": ["pending", "in_progress", "done", "cancelled", "failed"],
+                "description": "New task status.",
+            },
+            "result": {
+                "type": "string",
+                "description": "Short execution result.",
+            },
+            "notes": {
+                "type": "string",
+                "description": "Additional notes for the task record.",
+            },
+        },
+        "required": ["id"],
+    },
+)
+
 ALL_TOOLS = {
     "shell": [SHELL_TOOL],
     "memory": [MEMORY_READ_TOOL, MEMORY_WRITE_TOOL],
-    "task": [TASK_READ_TOOL],
+    "task": [TASK_READ_TOOL, TASK_CREATE_TOOL, TASK_UPDATE_TOOL],
 }
 IMAGE_ATTACHMENT_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
 
@@ -271,6 +323,21 @@ class AgentWorker:
             content = load_task(self.workspace)
             return content if content else "(no tasks)"
 
+        elif name == "create_task":
+            task = create_task(
+                self.workspace,
+                title=arguments.get("title", ""),
+                status=arguments.get("status", "pending"),
+                notes=arguments.get("notes", ""),
+            )
+            return f"Task created: {json.dumps(task, ensure_ascii=False)}"
+
+        elif name == "update_task":
+            applied = apply_task_updates(self.workspace, [arguments])
+            if applied:
+                return f"Task updated: {json.dumps(applied[0], ensure_ascii=False)}"
+            return "Task update skipped: id not found."
+
         return f"Unknown tool: {name}"
 
     async def _process_message(
@@ -431,6 +498,24 @@ class AgentWorker:
             self._total_processing_time_ms += elapsed_ms
             context.record_response_time(elapsed_ms)
             self.logger.error(f"Error processing message: {e}", exc_info=True)
+            if msg.get("type") == "heartbeat":
+                task_updates = []
+                error_text = str(e)
+                failed_status = "failed"
+                failure_result = "Heartbeat execution failed."
+                if "命令超时" in error_text or "timeout" in error_text.lower():
+                    failure_result = error_text
+                for task in msg.get("tasks", []) or []:
+                    task_id = str(task.get("id") or "").strip()
+                    if task_id:
+                        task_updates.append({
+                            "id": task_id,
+                            "status": failed_status,
+                            "result": failure_result,
+                            "notes": "Marked failed by heartbeat after agent execution error.",
+                        })
+                if task_updates:
+                    apply_task_updates(self.workspace, task_updates)
             self.outbox.put({
                 "type": "reply",
                 "agent_id": self.agent_id,
