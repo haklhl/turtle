@@ -58,7 +58,6 @@ UNDERLINE_RE = re.compile(r"__([^_\n]+?)__")
 SPOILER_RE = re.compile(r"\|\|([^\n|]+?)\|\|")
 STRIKE_RE = re.compile(r"~~([^~\n]+?)~~")
 ITALIC_STAR_RE = re.compile(r"(?<!\*)\*([^*\n]+?)\*(?!\*)")
-ITALIC_UNDERSCORE_RE = re.compile(r"(?<!_)_([^_\n]+?)_(?!_)")
 BOLD_RE = re.compile(r"\*\*(.+?)\*\*", re.DOTALL)
 
 
@@ -110,7 +109,6 @@ def _convert_inline_markdown_to_html(text: str) -> str:
     text = INLINE_CODE_RE.sub(lambda m: f"<code>{m.group(1)}</code>", text)
     text = BOLD_RE.sub(lambda m: f"<b>{m.group(1)}</b>", text)
     text = ITALIC_STAR_RE.sub(lambda m: f"<i>{m.group(1)}</i>", text)
-    text = ITALIC_UNDERSCORE_RE.sub(lambda m: f"<i>{m.group(1)}</i>", text)
     return text
 
 
