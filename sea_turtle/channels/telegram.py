@@ -43,7 +43,9 @@ BOT_COMMANDS = [
     BotCommand("reset", "🔄 重置对话上下文"),
     BotCommand("context", "📊 查看上下文用量"),
     BotCommand("prompt", "📜 查看当前 System Prompt"),
-    BotCommand("tasks", "🗂️ 查看最近任务"),
+    BotCommand("heartbeat", "🫀 查看心跳状态与结果"),
+    BotCommand("schedules", "⏰ 查看最近定时作业"),
+    BotCommand("tasks", "🗂️ 查看最近定时作业"),
     BotCommand("usage", "💰 查看 Token 用量与费用"),
     BotCommand("status", "📋 查看 Agent 状态"),
     BotCommand("model", "🤖 查看/切换模型 (如 /model gpt-4o)"),
@@ -195,7 +197,9 @@ class TelegramChannel(BaseChannel):
             app.add_handler(CommandHandler("reset", self._make_command_handler(agent_id)))
             app.add_handler(CommandHandler("context", self._make_command_handler(agent_id)))
             app.add_handler(CommandHandler("prompt", self._make_command_handler(agent_id)))
+            app.add_handler(CommandHandler("heartbeat", self._make_command_handler(agent_id)))
             app.add_handler(CommandHandler("restart", self._make_command_handler(agent_id)))
+            app.add_handler(CommandHandler("schedules", self._make_command_handler(agent_id)))
             app.add_handler(CommandHandler("tasks", self._make_command_handler(agent_id)))
             app.add_handler(CommandHandler("usage", self._make_command_handler(agent_id)))
             app.add_handler(CommandHandler("status", self._make_command_handler(agent_id)))

@@ -7,6 +7,7 @@ import math
 import os
 import signal
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -18,7 +19,19 @@ from sea_turtle.core.rules import load_rules, load_skills
 from sea_turtle.core.stickers import pick_sticker_for_emotion
 from sea_turtle.core.token_counter import TokenCounter
 from sea_turtle.core.context import ContextManager
-from sea_turtle.core.tasks import format_task_snapshot, list_recent_tasks, touch_tasks_for_heartbeat
+from sea_turtle.core.tasks import (
+    append_heartbeat_run,
+    append_schedule_run,
+    is_heartbeat_due,
+    is_schedule_due,
+    list_schedules,
+    list_recent_schedules,
+    load_heartbeat_data,
+    mark_heartbeat_started,
+    update_schedule,
+    mark_schedule_failed,
+    mark_schedules_started,
+)
 from sea_turtle.llm.registry import list_models, format_model_list, get_model_info, resolve_provider
 from sea_turtle.security.system_prompt import build_system_prompt
 from sea_turtle.utils.logger import get_daemon_logger
@@ -220,7 +233,9 @@ class Daemon:
                 "/reset — Reset conversation context\n"
                 "/context — Show context stats\n"
                 "/prompt — Show current final system prompt (owner only)\n"
-                "/tasks — Show recent tasks\n"
+                "/heartbeat — Show heartbeat status and latest result\n"
+                "/schedules — Show recent schedules\n"
+                "/tasks — Alias of /schedules\n"
                 "/restart — Restart agent process\n"
                 "/usage — Show token usage & costs\n"
                 "/status — Show agent status\n"
@@ -302,23 +317,49 @@ class Daemon:
                 f"ATTACH: {export_path}"
             )
 
-        elif cmd == "/tasks":
+        elif cmd == "/heartbeat":
             workspace = (get_agent_config(self.config, agent_id) or {}).get("workspace", f"~/.sea_turtle/agents/{agent_id}")
-            tasks = list_recent_tasks(workspace, limit=20)
-            if not tasks:
-                return "🗂️ 最近没有任务。"
-            lines = ["🗂️ Recent Tasks:"]
-            for task in tasks:
-                updated_at = (task.get("updated_at") or task.get("created_at") or "").replace("T", " ")
-                title = task.get("title", "").strip() or "(untitled)"
-                status = task.get("status", "pending")
-                result = task.get("result", "").strip()
-                line = f"- [{status}] {task.get('id', '?')} {title}"
+            heartbeat = load_heartbeat_data(workspace)
+            last_run_at = (heartbeat.get("last_run_at") or "").replace("T", " ")
+            last_result = str(heartbeat.get("last_result") or "").strip()
+            lines = [
+                "🫀 Heartbeat:",
+                f"- Status: {'enabled' if heartbeat.get('enabled') else 'disabled'}",
+                f"- Interval: {heartbeat.get('interval_minutes', 60)} min",
+                f"- Running: {'yes' if heartbeat.get('is_running') else 'no'}",
+                f"- Run Count: {heartbeat.get('run_count', 0)}",
+            ]
+            if last_run_at:
+                lines.append(f"- Last Run: {last_run_at}")
+            if heartbeat.get("last_outcome"):
+                lines.append(f"- Last Outcome: {heartbeat.get('last_outcome')}")
+            if last_result:
+                lines.append(f"- Last Result: {last_result[:200]}")
+            return "\n".join(lines)
+
+        elif cmd in {"/tasks", "/schedules"}:
+            workspace = (get_agent_config(self.config, agent_id) or {}).get("workspace", f"~/.sea_turtle/agents/{agent_id}")
+            schedules = list_recent_schedules(workspace, limit=20)
+            if not schedules:
+                return "⏰ 最近没有定时作业。"
+            lines = ["⏰ Recent Schedules:"]
+            for schedule in schedules:
+                updated_at = (schedule.get("updated_at") or schedule.get("created_at") or "").replace("T", " ")
+                title = schedule.get("description", "").strip() or "(untitled)"
+                status = schedule.get("status", "enabled")
+                trigger = schedule.get("trigger", {})
+                trigger_text = (
+                    f"every {trigger.get('seconds')}s"
+                    if trigger.get("type") == "interval"
+                    else f"daily {trigger.get('time')} {trigger.get('timezone', 'UTC')}"
+                )
+                result = schedule.get("last_result", "").strip()
+                line = f"- [{status}] {schedule.get('id', '?')} {title} | {schedule.get('execution_type')} | {trigger_text}"
                 if updated_at:
                     line += f" ({updated_at})"
                 lines.append(line)
                 if result:
-                    lines.append(f"  result: {result[:160]}")
+                    lines.append(f"  last: {result[:160]}")
             return "\n".join(lines)
 
         elif cmd == "/restart":
@@ -339,6 +380,9 @@ class Daemon:
                 status = "🟢 Running" if handle.is_alive else "🔴 Stopped"
                 uptime_min = handle.uptime / 60
                 agent_cfg = get_agent_config(self.config, agent_id) or {}
+                workspace = agent_cfg.get("workspace", f"~/.sea_turtle/agents/{agent_id}")
+                heartbeat = load_heartbeat_data(workspace)
+                enabled_schedule_count = len(list_schedules(workspace, include_disabled=False))
                 provider = resolve_provider(
                     agent_cfg.get("model", self.config.get("llm", {}).get("default_model", "")),
                     self.config.get("llm", {}).get("default_provider", "google"),
@@ -382,7 +426,10 @@ class Daemon:
                     f"  Name: {agent_cfg.get('name', 'Turtle')}\n"
                     f"  Model: {agent_cfg.get('model', '?')} ({provider})\n"
                     f"  Sandbox: {agent_cfg.get('sandbox', 'confined')}\n"
-                    f"  Workspace: {agent_cfg.get('workspace', '~/.sea_turtle/agents/default')}"
+                    f"  Workspace: {workspace}"
+                    f"\n  Heartbeat: {'enabled' if heartbeat.get('enabled') else 'disabled'}"
+                    f"\n  Heartbeat Interval: {heartbeat.get('interval_minutes', 60)} min"
+                    f"\n  Enabled Schedules: {enabled_schedule_count}"
                     f"{codex_lines}{runtime_lines}\n"
                     f"  PID: {handle.pid or 'N/A'}\n"
                     f"  Uptime: {uptime_min:.1f} min\n"
@@ -526,12 +573,51 @@ class Daemon:
                         if not future.done():
                             future.set_result(msg)
                         continue
+                    if msg.get("type") == "heartbeat_result":
+                        await self._handle_heartbeat_result(msg)
+                        continue
+                    if msg.get("type") == "schedule_result":
+                        await self._handle_schedule_result(msg)
+                        continue
                     # Regular replies go to channels
                     logger.debug(f"Dispatching reply from '{agent_id}' to {msg.get('source')}:{msg.get('chat_id')}")
                     await self._send_reply(msg)
                 except Exception as e:
                     logger.error(f"Error dispatching reply: {e}", exc_info=True)
             await asyncio.sleep(0.1)
+
+    async def _handle_schedule_result(self, msg: dict) -> None:
+        """Persist one scheduled run result and notify owners."""
+        agent_id = msg.get("agent_id", "default")
+        schedule_id = str(msg.get("schedule_id") or "").strip()
+        if not schedule_id:
+            logger.warning("Dropped schedule_result without schedule_id")
+            return
+        workspace = (get_agent_config(self.config, agent_id) or {}).get("workspace", f"~/.sea_turtle/agents/{agent_id}")
+        append_schedule_run(
+            workspace,
+            schedule_id,
+            outcome=str(msg.get("outcome") or "error"),
+            summary=str(msg.get("summary") or msg.get("content") or "").strip(),
+            output=str(msg.get("output") or "").strip(),
+            error=str(msg.get("error") or "").strip(),
+            started_at=str(msg.get("started_at") or "") or None,
+        )
+        await self._send_reply(msg)
+
+    async def _handle_heartbeat_result(self, msg: dict) -> None:
+        """Persist one heartbeat run result and notify owners."""
+        agent_id = msg.get("agent_id", "default")
+        workspace = (get_agent_config(self.config, agent_id) or {}).get("workspace", f"~/.sea_turtle/agents/{agent_id}")
+        append_heartbeat_run(
+            workspace,
+            outcome=str(msg.get("outcome") or "error"),
+            summary=str(msg.get("summary") or msg.get("content") or "").strip(),
+            output=str(msg.get("output") or "").strip(),
+            error=str(msg.get("error") or "").strip(),
+            started_at=str(msg.get("started_at") or "") or None,
+        )
+        await self._send_reply(msg)
 
     async def _send_reply(self, msg: dict) -> None:
         """Send a reply message to the appropriate channel."""
@@ -552,7 +638,9 @@ class Daemon:
         elif source == "discord":
             await self._send_discord_reply(chat_id, payload["text"], agent_id)
         elif source == "heartbeat":
-            await self._send_heartbeat_summary(agent_id, payload["text"])
+            logger.debug(f"Heartbeat result for '{agent_id}': {payload['text'][:200]}")
+        elif source == "scheduler":
+            logger.debug(f"Schedule result for '{agent_id}': {payload['text'][:200]}")
         else:
             logger.debug(f"Reply to {source}: {payload['text'][:100]}")
 
@@ -640,6 +728,18 @@ class Daemon:
         for owner_id in owners:
             await self._telegram_channel.send_message(owner_id, summary, agent_id)
 
+    async def _send_scheduler_summary(self, agent_id: str, content: str) -> None:
+        """Push schedule execution summary to Telegram owners."""
+        if not content or not self._telegram_channel:
+            return
+        owners = self._telegram_owner_ids(agent_id)
+        if not owners:
+            logger.info(f"No Telegram owners configured for scheduler summary of '{agent_id}'")
+            return
+        summary = f"⏰ Schedule / {agent_id}\n{content.strip()}"
+        for owner_id in owners:
+            await self._telegram_channel.send_message(owner_id, summary, agent_id)
+
     async def _health_monitor(self) -> None:
         """Periodically check agent health and recover crashed agents."""
         while self._running:
@@ -648,34 +748,56 @@ class Daemon:
             if restarted:
                 logger.warning(f"Recovered crashed agents: {restarted}")
 
-    async def _on_tasks_found(self, agent_id: str, tasks: list[dict]) -> None:
-        """Callback when heartbeat finds pending tasks."""
-        task_ids = [task["id"] for task in tasks]
-        touch_tasks_for_heartbeat(
-            (get_agent_config(self.config, agent_id) or {}).get("workspace", f"~/.sea_turtle/agents/{agent_id}"),
-            task_ids,
-        )
-        message = (
-            "You are handling a periodic heartbeat task sweep.\n"
-            "Review the actionable tasks below and do whatever work is appropriate now.\n"
-            "Return a concise owner-facing summary first, then a machine-readable task report.\n\n"
-            "Format exactly:\n"
-            "SUMMARY:\n<short Chinese summary for the owner>\n\n"
-            "TASK_REPORT:\n"
-            "```json\n"
-            "{\"updates\":[{\"id\":\"task-1\",\"status\":\"pending|in_progress|done|cancelled\",\"result\":\"...\",\"notes\":\"...\"}],"
-            "\"summary\":\"optional short summary\"}\n"
-            "```\n\n"
-            "Only include tasks that changed or that you actually reviewed.\n"
-            "Actionable tasks:\n"
-            f"{format_task_snapshot(tasks)}"
-        )
-        self.agent_manager.send_message(agent_id, {
-            "type": "heartbeat",
-            "content": message,
-            "source": "heartbeat",
-            "tasks": tasks,
-        })
+    async def _on_tasks_found(self, agent_id: str) -> None:
+        """Scheduler tick: dispatch due schedules and heartbeat if needed."""
+        workspace = (get_agent_config(self.config, agent_id) or {}).get("workspace", f"~/.sea_turtle/agents/{agent_id}")
+        schedules = list_schedules(workspace, include_disabled=False)
+        incompatible = [item for item in schedules if item.get("execution_type") != "script"]
+        for schedule in incompatible:
+            update_schedule(
+                workspace,
+                str(schedule.get("id") or ""),
+                status="disabled",
+            )
+            logger.warning(
+                "Disabled incompatible non-script schedule '%s' for agent '%s'",
+                schedule.get("id"),
+                agent_id,
+            )
+        due_schedules = [
+            item for item in schedules
+            if item.get("status") == "enabled"
+            and not item.get("is_running")
+            and item.get("execution_type") == "script"
+        ]
+        due_schedules = [item for item in due_schedules if is_schedule_due(item)]
+        started_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+        started = mark_schedules_started(workspace, [task["id"] for task in due_schedules], started_at=started_at)
+        for schedule in started:
+            sent = self.agent_manager.send_message(agent_id, {
+                "type": "schedule_run",
+                "source": "scheduler",
+                "schedule": schedule,
+                "started_at": started_at,
+            })
+            if not sent:
+                mark_schedule_failed(workspace, schedule["id"], error="Agent is not running; scheduled job could not be dispatched.", started_at=started_at)
+        if is_heartbeat_due(workspace):
+            heartbeat = mark_heartbeat_started(workspace, started_at=started_at)
+            sent = self.agent_manager.send_message(agent_id, {
+                "type": "heartbeat_run",
+                "source": "heartbeat",
+                "heartbeat": heartbeat,
+                "started_at": started_at,
+            })
+            if not sent:
+                append_heartbeat_run(
+                    workspace,
+                    outcome="error",
+                    summary="Agent is not running; heartbeat could not be dispatched.",
+                    error="Agent is not running; heartbeat could not be dispatched.",
+                    started_at=started_at,
+                )
 
     async def _start_channels(self) -> None:
         """Start configured communication channels."""

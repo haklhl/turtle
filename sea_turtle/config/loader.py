@@ -103,7 +103,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
             "human_name": "Human",
             "workspace": "~/.sea_turtle/agents/default",
             "model": "gemini-2.5-flash",
-            "tools": ["shell", "memory", "task"],
+            "tools": ["shell", "memory", "schedule"],
             "sandbox": "confined",
             "codex": {},
             "telegram": {

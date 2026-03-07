@@ -31,7 +31,7 @@ seaturtle agent add myagent --name "My Agent" --model gpt-4o --sandbox confined
       "human_name": "Human",
       "workspace": "~/.sea_turtle/agents/myagent",
       "model": "gpt-4o",
-      "tools": ["shell", "memory", "task"],
+      "tools": ["shell", "memory", "schedule"],
       "sandbox": "confined",
       "telegram": {
         "bot_token_env": "TELEGRAM_BOT_TOKEN_MYAGENT",
@@ -55,7 +55,7 @@ agents/myagent/
 ├── rules.md            # Agent 人设和行为规则
 ├── skills.md           # Agent 专属技能
 ├── memory.md           # 持久记忆
-├── task.md             # 待办任务（心跳检查）
+├── schedule.json       # 定时作业定义
 └── .shell_history      # Shell 命令历史
 ```
 
@@ -89,7 +89,7 @@ agents/myagent/
 
 Agent 的持久记忆。Agent 可以通过工具读写此文件，用于跨对话保存重要信息。
 
-### task.md
+### schedule.json
 
 待办任务列表。心跳系统会定期检查，发现未完成任务时通知 Agent。
 

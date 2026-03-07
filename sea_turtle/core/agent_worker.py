@@ -15,9 +15,18 @@ from sea_turtle.core.context import ContextManager
 from sea_turtle.core.memory import MemoryManager
 from sea_turtle.core.rules import load_rules, load_skills
 from sea_turtle.core.shell import ShellExecutor
-from sea_turtle.core.tasks import apply_task_updates, create_task, extract_task_report
+from sea_turtle.core.tasks import (
+    create_schedule,
+    list_heartbeat_runs,
+    list_schedule_runs,
+    render_heartbeat_file,
+    render_schedule_file,
+    update_heartbeat,
+    update_schedule,
+    validate_script_command,
+)
 from sea_turtle.core.token_counter import TokenCounter
-from sea_turtle.llm.base import BaseLLMProvider, LLMResponse, ToolDefinition
+from sea_turtle.llm.base import BaseLLMProvider, ToolDefinition
 from sea_turtle.llm.registry import resolve_provider
 from sea_turtle.security.system_prompt import build_system_prompt
 from sea_turtle.utils.logger import get_agent_logger
@@ -68,71 +77,173 @@ MEMORY_WRITE_TOOL = ToolDefinition(
     },
 )
 
-TASK_READ_TOOL = ToolDefinition(
-    name="read_tasks",
-    description="Read the structured task list from task.json.",
+SCHEDULE_READ_TOOL = ToolDefinition(
+    name="read_schedules",
+    description="Read the agent-scoped schedule registry and recent run history.",
     parameters={
         "type": "object",
         "properties": {},
     },
 )
 
-TASK_CREATE_TOOL = ToolDefinition(
-    name="create_task",
-    description="Create a new structured task in task.json for future heartbeat processing.",
-    parameters={
-        "type": "object",
-        "properties": {
-            "title": {
-                "type": "string",
-                "description": "Short task title describing the work to do.",
-            },
-            "notes": {
-                "type": "string",
-                "description": "Optional extra notes or acceptance criteria.",
-            },
-            "status": {
-                "type": "string",
-                "enum": ["pending", "in_progress", "done", "cancelled", "failed"],
-                "description": "Initial task status.",
-            },
-        },
-        "required": ["title"],
-    },
-)
-
-TASK_UPDATE_TOOL = ToolDefinition(
-    name="update_task",
-    description="Update one existing task in task.json by id.",
+SCHEDULE_RUN_READ_TOOL = ToolDefinition(
+    name="read_schedule_runs",
+    description="Read recent execution logs for scheduled jobs.",
     parameters={
         "type": "object",
         "properties": {
             "id": {
                 "type": "string",
-                "description": "Task id such as task-1.",
+                "description": "Optional schedule id such as schedule-1.",
+            },
+            "limit": {
+                "type": "integer",
+                "description": "Maximum number of log entries to return.",
+            },
+        },
+    },
+)
+
+HEARTBEAT_READ_TOOL = ToolDefinition(
+    name="read_heartbeat",
+    description="Read the current heartbeat configuration and recent heartbeat runs.",
+    parameters={
+        "type": "object",
+        "properties": {
+        },
+    },
+)
+
+HEARTBEAT_RUN_READ_TOOL = ToolDefinition(
+    name="read_heartbeat_runs",
+    description="Read the latest heartbeat execution logs.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "limit": {
+                "type": "integer",
+                "description": "Maximum number of heartbeat log entries to return.",
+            },
+        },
+    },
+)
+
+SCHEDULE_CREATE_TOOL = ToolDefinition(
+    name="create_schedule",
+    description="Create one recurring script schedule for this agent. The command must start with a file path inside the agent workspace.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "description": {
+                "type": "string",
+                "description": "Human-readable description of this script schedule.",
             },
             "status": {
                 "type": "string",
-                "enum": ["pending", "in_progress", "done", "cancelled", "failed"],
-                "description": "New task status.",
+                "enum": ["enabled", "disabled"],
+                "description": "Whether this schedule is active immediately.",
             },
-            "result": {
-                "type": "string",
-                "description": "Short execution result.",
+            "interval_seconds": {
+                "type": "integer",
+                "description": "Run every N seconds. Use this or daily_time.",
             },
-            "notes": {
+            "daily_time": {
                 "type": "string",
-                "description": "Additional notes for the task record.",
+                "description": "Run once per day at HH:MM. Use this or interval_seconds.",
+            },
+            "timezone": {
+                "type": "string",
+                "description": "Timezone for daily_time, e.g. UTC or +08:00.",
+            },
+            "command": {
+                "type": "string",
+                "description": "Script command whose first token resolves to a file inside the current agent workspace.",
+            },
+        },
+        "required": ["description", "command"],
+    },
+)
+
+SCHEDULE_UPDATE_TOOL = ToolDefinition(
+    name="update_schedule",
+    description="Update one existing script schedule. Disable instead of deleting so history is preserved.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "id": {
+                "type": "string",
+                "description": "Schedule id such as schedule-1.",
+            },
+            "description": {
+                "type": "string",
+                "description": "Updated human-readable description.",
+            },
+            "status": {
+                "type": "string",
+                "enum": ["enabled", "disabled"],
+                "description": "Enable or disable the schedule.",
+            },
+            "interval_seconds": {
+                "type": "integer",
+                "description": "Update to run every N seconds.",
+            },
+            "daily_time": {
+                "type": "string",
+                "description": "Update to run once per day at HH:MM.",
+            },
+            "timezone": {
+                "type": "string",
+                "description": "Timezone for daily_time, e.g. UTC or +08:00.",
+            },
+            "command": {
+                "type": "string",
+                "description": "Updated script command whose first token resolves to a file inside the current agent workspace.",
             },
         },
         "required": ["id"],
     },
 )
 
+HEARTBEAT_UPDATE_TOOL = ToolDefinition(
+    name="update_heartbeat",
+    description="Enable or disable the agent heartbeat and/or change its interval in minutes.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "enabled": {
+                "type": "boolean",
+                "description": "Whether heartbeat is enabled.",
+            },
+            "interval_minutes": {
+                "type": "integer",
+                "description": "Heartbeat interval in minutes. Minimum 5, default 60.",
+            },
+        },
+    },
+)
+
 ALL_TOOLS = {
     "shell": [SHELL_TOOL],
     "memory": [MEMORY_READ_TOOL, MEMORY_WRITE_TOOL],
-    "task": [TASK_READ_TOOL, TASK_CREATE_TOOL, TASK_UPDATE_TOOL],
+    "schedule": [
+        SCHEDULE_READ_TOOL,
+        SCHEDULE_RUN_READ_TOOL,
+        SCHEDULE_CREATE_TOOL,
+        SCHEDULE_UPDATE_TOOL,
+        HEARTBEAT_READ_TOOL,
+        HEARTBEAT_RUN_READ_TOOL,
+        HEARTBEAT_UPDATE_TOOL,
+    ],
+    "task": [
+        SCHEDULE_READ_TOOL,
+        SCHEDULE_RUN_READ_TOOL,
+        SCHEDULE_CREATE_TOOL,
+        SCHEDULE_UPDATE_TOOL,
+        HEARTBEAT_READ_TOOL,
+        HEARTBEAT_RUN_READ_TOOL,
+        HEARTBEAT_UPDATE_TOOL,
+    ],
+    "heartbeat": [HEARTBEAT_READ_TOOL, HEARTBEAT_RUN_READ_TOOL, HEARTBEAT_UPDATE_TOOL],
 }
 IMAGE_ATTACHMENT_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
 
@@ -280,12 +391,123 @@ class AgentWorker:
 
     def _get_tools(self) -> list[ToolDefinition]:
         """Get tool definitions based on agent config."""
-        enabled_tools = self.agent_config.get("tools", ["shell", "memory", "task"])
+        enabled_tools = self.agent_config.get("tools", ["shell", "memory", "schedule"])
         tools = []
         for tool_name in enabled_tools:
             if tool_name in ALL_TOOLS:
                 tools.extend(ALL_TOOLS[tool_name])
         return tools
+
+    @staticmethod
+    def _build_schedule_trigger(arguments: dict[str, Any]) -> tuple[dict[str, Any], str | None]:
+        has_interval = arguments.get("interval_seconds") is not None
+        has_daily = bool(str(arguments.get("daily_time") or "").strip())
+        if has_interval and has_daily:
+            return {}, "use either interval_seconds or daily_time, not both."
+        if has_daily:
+            return ({
+                "type": "daily",
+                "time": str(arguments.get("daily_time") or "").strip(),
+                "timezone": str(arguments.get("timezone") or "UTC").strip() or "UTC",
+            }, None)
+        interval_seconds = arguments.get("interval_seconds")
+        if interval_seconds is None:
+            interval_seconds = 300
+        try:
+            interval_seconds = int(interval_seconds)
+        except (TypeError, ValueError):
+            return {}, "interval_seconds must be an integer."
+        if interval_seconds < 60:
+            return {}, "interval_seconds must be at least 60."
+        return ({
+            "type": "interval",
+            "seconds": interval_seconds,
+        }, None)
+
+    async def _run_schedule_job(self, msg: dict) -> dict[str, Any]:
+        schedule = msg.get("schedule") or {}
+        execution_type = str(schedule.get("execution_type") or "").strip().lower()
+        started_at = str(msg.get("started_at") or "")
+        schedule_id = str(schedule.get("id") or "")
+        description = str(schedule.get("description") or "").strip() or schedule_id
+
+        if execution_type != "script":
+            return {
+                "type": "schedule_result",
+                "agent_id": self.agent_id,
+                "schedule_id": schedule_id,
+                "source": "scheduler",
+                "content": f"Schedule {schedule_id} failed: only script schedules are supported.",
+                "started_at": started_at,
+                "outcome": "error",
+                "summary": "only script schedules are supported",
+                "error": "only script schedules are supported",
+            }
+        command = str((schedule.get("target") or {}).get("command") or "").strip()
+        ok, detail = validate_script_command(self.workspace, command)
+        if not ok:
+            return {
+                "type": "schedule_result",
+                "agent_id": self.agent_id,
+                "schedule_id": schedule_id,
+                "source": "scheduler",
+                "content": f"Schedule {schedule_id} failed: {detail}",
+                "started_at": started_at,
+                "outcome": "error",
+                "summary": detail,
+                "error": detail,
+            }
+
+        result = await self.shell.execute(command)
+        stdout = (result.stdout or "").strip()
+        stderr = (result.stderr or "").strip()
+        if result.exit_code == 0:
+            summary = stdout.splitlines()[0].strip() if stdout else f"脚本已执行：{description}"
+            outcome = "success" if stdout else "noop"
+            content = f"定时脚本 `{schedule_id}` 已执行。{summary}"
+        else:
+            summary = stderr or stdout or f"脚本执行失败，exit_code={result.exit_code}"
+            outcome = "error"
+            content = f"定时脚本 `{schedule_id}` 执行失败。{summary}"
+        output = "\n".join(part for part in [stdout, stderr] if part).strip()
+        return {
+            "type": "schedule_result",
+            "agent_id": self.agent_id,
+            "schedule_id": schedule_id,
+            "source": "scheduler",
+            "content": content,
+            "started_at": started_at,
+            "outcome": outcome,
+            "summary": summary,
+            "output": output,
+            "error": stderr if outcome == "error" else "",
+        }
+
+    async def _run_heartbeat(self, msg: dict) -> dict[str, Any]:
+        started_at = str(msg.get("started_at") or "")
+        user_message = (
+            "You are running your periodic heartbeat.\n"
+            "Heartbeat is for waking yourself up to review, think, inspect, and handle higher-level follow-up work.\n"
+            "Heartbeat is not the place for repeated fixed script execution; recurring scripts belong in schedule.json.\n"
+            "Review your memory, rules, and current local context.\n"
+            "Check the currently active schedules and verify whether they seem healthy; if there is a small, clear fix you can apply safely, do that.\n"
+            "If there is useful maintenance, monitoring, or judgment-heavy follow-up work worth doing now, do it.\n"
+            "If nothing needs to be done, say so explicitly.\n"
+            "Reply with a concise Chinese summary."
+        )
+        reply = await self._process_message(user_message, source="heartbeat", chat_id="heartbeat", user_id=self.agent_id)
+        summary = (reply or "").strip() or "Heartbeat ran with no visible output."
+        return {
+            "type": "heartbeat_result",
+            "agent_id": self.agent_id,
+            "source": "heartbeat",
+            "content": summary,
+            "started_at": started_at,
+            "outcome": "noop" if not reply or not reply.strip() else "success",
+            "summary": summary,
+            "output": reply or "",
+            "error": "",
+        }
 
     async def _handle_tool_call(self, name: str, arguments: dict) -> str:
         """Execute a tool call and return the result string."""
@@ -324,25 +546,95 @@ class AgentWorker:
                 success = self.memory.append(content)
             return "Memory updated." if success else "Failed to update memory."
 
-        elif name == "read_tasks":
-            from sea_turtle.core.rules import load_task
-            content = load_task(self.workspace)
-            return content if content else "(no tasks)"
+        elif name in {"read_schedules", "read_tasks"}:
+            content = render_schedule_file(self.workspace)
+            return content if content else "(no schedules)"
 
-        elif name == "create_task":
-            task = create_task(
+        elif name == "read_schedule_runs":
+            runs = list_schedule_runs(
                 self.workspace,
-                title=arguments.get("title", ""),
-                status=arguments.get("status", "pending"),
-                notes=arguments.get("notes", ""),
+                schedule_id=str(arguments.get("id") or "").strip() or None,
+                limit=max(1, min(int(arguments.get("limit") or 20), 100)),
             )
-            return f"Task created: {json.dumps(task, ensure_ascii=False)}"
+            return json.dumps(runs, ensure_ascii=False, indent=2) if runs else "[]"
 
-        elif name == "update_task":
-            applied = apply_task_updates(self.workspace, [arguments])
-            if applied:
-                return f"Task updated: {json.dumps(applied[0], ensure_ascii=False)}"
-            return "Task update skipped: id not found."
+        elif name in {"create_schedule", "create_task"}:
+            description = str(arguments.get("description") or arguments.get("title") or "").strip()
+            if not description:
+                return "Schedule creation skipped: description is required."
+            command = str(arguments.get("command") or "").strip()
+            ok, detail = validate_script_command(self.workspace, command)
+            if not ok:
+                return f"Schedule creation skipped: {detail}"
+            trigger, error = self._build_schedule_trigger(arguments)
+            if error:
+                return f"Schedule creation skipped: {error}"
+            schedule = create_schedule(
+                self.workspace,
+                author=self.agent_id,
+                description=description,
+                execution_type="script",
+                trigger=trigger,
+                target={"command": command},
+                status=str(arguments.get("status") or "enabled").strip().lower() or "enabled",
+            )
+            return f"Schedule created: {json.dumps(schedule, ensure_ascii=False)}"
+
+        elif name in {"update_schedule", "update_task"}:
+            schedule_id = str(arguments.get("id") or "").strip()
+            if not schedule_id:
+                return "Schedule update skipped: id is required."
+            trigger = None
+            if arguments.get("interval_seconds") is not None or str(arguments.get("daily_time") or "").strip():
+                trigger, error = self._build_schedule_trigger(arguments)
+                if error:
+                    return f"Schedule update skipped: {error}"
+            target = None
+            if arguments.get("command") is not None:
+                command = str(arguments.get("command") or "").strip()
+                ok, detail = validate_script_command(self.workspace, command)
+                if not ok:
+                    return f"Schedule update skipped: {detail}"
+                target = {"command": command}
+            updated = update_schedule(
+                self.workspace,
+                schedule_id,
+                description=arguments.get("description"),
+                status=arguments.get("status"),
+                trigger=trigger,
+                target=target,
+            )
+            if updated:
+                return f"Schedule updated: {json.dumps(updated, ensure_ascii=False)}"
+            return "Schedule update skipped: id not found."
+
+        elif name == "read_heartbeat":
+            content = render_heartbeat_file(self.workspace)
+            return content if content else "(no heartbeat)"
+
+        elif name == "read_heartbeat_runs":
+            runs = list_heartbeat_runs(
+                self.workspace,
+                limit=max(1, min(int(arguments.get("limit") or 20), 100)),
+            )
+            return json.dumps(runs, ensure_ascii=False, indent=2) if runs else "[]"
+
+        elif name == "update_heartbeat":
+            enabled = arguments.get("enabled") if "enabled" in arguments else None
+            interval_minutes = arguments.get("interval_minutes") if "interval_minutes" in arguments else None
+            if interval_minutes is not None:
+                try:
+                    interval_minutes = int(interval_minutes)
+                except (TypeError, ValueError):
+                    return "Heartbeat update skipped: interval_minutes must be an integer."
+                if interval_minutes < 5:
+                    return "Heartbeat update skipped: interval_minutes must be at least 5."
+            heartbeat = update_heartbeat(
+                self.workspace,
+                enabled=enabled,
+                interval_minutes=interval_minutes,
+            )
+            return f"Heartbeat updated: {json.dumps(heartbeat, ensure_ascii=False)}"
 
         return f"Unknown tool: {name}"
 
@@ -440,6 +732,44 @@ class AgentWorker:
 
     async def _process_incoming_message(self, msg: dict) -> None:
         """Process one message-like inbox item and emit a reply."""
+        if msg.get("type") == "schedule_run":
+            try:
+                result = await self._run_schedule_job(msg)
+                self.outbox.put(result)
+            except Exception as e:
+                schedule = msg.get("schedule") or {}
+                self.logger.error(f"Error processing schedule run: {e}", exc_info=True)
+                self.outbox.put({
+                    "type": "schedule_result",
+                    "agent_id": self.agent_id,
+                    "schedule_id": str(schedule.get("id") or ""),
+                    "source": "scheduler",
+                    "content": f"定时任务执行失败：{e}",
+                    "started_at": str(msg.get("started_at") or ""),
+                    "outcome": "error",
+                    "summary": str(e),
+                    "error": str(e),
+                })
+            return
+
+        if msg.get("type") == "heartbeat_run":
+            try:
+                result = await self._run_heartbeat(msg)
+                self.outbox.put(result)
+            except Exception as e:
+                self.logger.error(f"Error processing heartbeat run: {e}", exc_info=True)
+                self.outbox.put({
+                    "type": "heartbeat_result",
+                    "agent_id": self.agent_id,
+                    "source": "heartbeat",
+                    "content": f"Heartbeat failed: {e}",
+                    "started_at": str(msg.get("started_at") or ""),
+                    "outcome": "error",
+                    "summary": str(e),
+                    "error": str(e),
+                })
+            return
+
         user_text = msg.get("content", "")
         source = msg.get("source", "unknown")
         self.logger.info(f"Processing message from {source}: {user_text[:100]}...")
@@ -471,23 +801,6 @@ class AgentWorker:
                 "elapsed_ms": elapsed_ms,
             }
 
-            if msg.get("type") == "heartbeat":
-                summary, report = extract_task_report(reply or "")
-                if report:
-                    updates = report.get("updates", [])
-                    applied = apply_task_updates(self.workspace, updates if isinstance(updates, list) else [])
-                    if applied:
-                        outbox_message["task_updates"] = applied
-                    summary_text = summary.replace("SUMMARY:", "", 1).strip() if summary else ""
-                    if not summary_text:
-                        summary_text = str(report.get("summary") or "").strip()
-                    outbox_message["content"] = summary_text or "Heartbeat processed pending tasks."
-                else:
-                    outbox_message["content"] = (
-                        "Heartbeat ran, but no valid task report was produced. "
-                        "Task state was left unchanged."
-                    )
-
             self.logger.info(
                 f"LLM reply received ({len(reply) if reply else 0} chars), sending to outbox"
             )
@@ -504,24 +817,6 @@ class AgentWorker:
             self._total_processing_time_ms += elapsed_ms
             context.record_response_time(elapsed_ms)
             self.logger.error(f"Error processing message: {e}", exc_info=True)
-            if msg.get("type") == "heartbeat":
-                task_updates = []
-                error_text = str(e)
-                failed_status = "failed"
-                failure_result = "Heartbeat execution failed."
-                if "命令超时" in error_text or "timeout" in error_text.lower():
-                    failure_result = error_text
-                for task in msg.get("tasks", []) or []:
-                    task_id = str(task.get("id") or "").strip()
-                    if task_id:
-                        task_updates.append({
-                            "id": task_id,
-                            "status": failed_status,
-                            "result": failure_result,
-                            "notes": "Marked failed by heartbeat after agent execution error.",
-                        })
-                if task_updates:
-                    apply_task_updates(self.workspace, task_updates)
             self.outbox.put({
                 "type": "reply",
                 "agent_id": self.agent_id,
@@ -553,7 +848,7 @@ class AgentWorker:
                     break
 
                 msg_type = msg.get("type", "")
-                if msg_type in {"message", "heartbeat"}:
+                if msg_type in {"message", "heartbeat", "schedule_run", "heartbeat_run"}:
                     await self._process_incoming_message(msg)
 
                 elif msg_type == "set_model":

@@ -114,7 +114,7 @@ Sea Turtle 使用 JSON 格式配置文件，默认位置：`~/.sea_turtle/config
 | `human_name` | string | `"Human"` | 用户称谓 |
 | `workspace` | string | `"~/.sea_turtle/agents/<id>"` | 工作目录（默认在仓库外） |
 | `model` | string | 继承全局 | 使用的模型 |
-| `tools` | list | `["shell","memory","task"]` | 启用的工具 |
+| `tools` | list | `["shell","memory","schedule"]` | 启用的工具 |
 | `sandbox` | string | `"confined"` | 沙箱模式 (normal/confined/restricted) |
 | `telegram` | object | — | Agent 专属 Telegram 配置 |
 | `discord` | object | — | Agent 专属 Discord 配置 |

@@ -82,9 +82,16 @@ TOOL_GUIDANCE_SECTION = """\
 ## Tool Guidance
 - `shell`: Execute commands inside the workspace. Prefer direct inspection and minimal commands.
 - `memory`: Read or update long-lived notes in `memory.md` when the fact is worth persisting.
-- `task`: Read structured task state from `task.json` when the user asks about tasks or you need to continue queued work.
-- Task records live in `task.json` with fields like `id`, `title`, `status`, `result`, `notes`, `created_at`, and `updated_at`.
-- Use `create_task` to record new follow-up work for future heartbeats. Use `update_task` to mark progress or completion instead of inventing your own file format.
+- `schedule`: Read agent-scoped script schedules from `schedule.json` and inspect recent schedule run logs.
+- `schedule` is for recurring, repeatable script automation only. Use it when the same concrete script should run again and again without fresh reasoning each time.
+- Schedule files are for recurring script jobs only. Their commands must start with a file path inside the agent workspace.
+- Use `create_schedule` and `update_schedule` instead of writing `schedule.json` by hand. Pick either `interval_seconds` or `daily_time`, not both.
+- Script schedules must use `interval_seconds >= 60`, and the first command token must resolve to a file inside the current agent workspace.
+- `heartbeat`: Manage your singleton self-wakeup loop in `heartbeat.json`.
+- `heartbeat` is for waking yourself up later to do higher-level review, monitoring, and judgment-heavy follow-up work. It is not the mechanism for repeated script execution.
+- If the work is "run this same script repeatedly", use `schedule`. If the work is "wake me later so I can think, inspect, decide, and possibly act", use `heartbeat`.
+- Use `read_heartbeat` to inspect heartbeat state and `read_heartbeat_runs` to inspect the latest 20 heartbeat logs.
+- Use `update_heartbeat` to enable/disable heartbeat or change its interval. Interval is in minutes, defaults to 60, and cannot be set below 5.
 - Ask for confirmation before any destructive or privilege-changing command.
 """
 

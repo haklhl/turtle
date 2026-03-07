@@ -28,7 +28,7 @@
 - `--model`: LLM 模型（默认继承全局配置）
 - `--sandbox`: 沙箱模式 normal/confined/restricted（默认 confined）
 
-自动创建工作目录和初始文件（rules.md, skills.md, memory.md, task.md）。
+自动创建工作目录和初始文件（rules.md, skills.md, memory.md, schedule.json）。
 
 ### `seaturtle agent del <id> [--force]`
 从配置中删除 Agent。

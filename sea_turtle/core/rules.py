@@ -3,7 +3,7 @@
 import os
 from pathlib import Path
 
-from sea_turtle.core.tasks import init_task_store, list_actionable_tasks, render_task_file
+from sea_turtle.core.tasks import init_schedule_store, list_due_schedules, render_schedule_file
 
 
 def load_rules(workspace: str) -> str:
@@ -45,31 +45,31 @@ def load_skills(workspace: str) -> str:
 
 
 def load_task(workspace: str) -> str:
-    """Load structured task content from agent workspace.
+    """Load structured scheduler content from agent workspace.
 
     Args:
         workspace: Path to agent workspace directory.
 
     Returns:
-        JSON task content string.
+        JSON schedule content string.
     """
     try:
-        return render_task_file(workspace)
+        return render_schedule_file(workspace)
     except Exception:
         pass
     return ""
 
 
 def get_pending_tasks(workspace: str) -> list[str]:
-    """Return list of actionable task titles from structured task store.
+    """Return list of due schedule descriptions.
 
     Args:
         workspace: Path to agent workspace directory.
 
     Returns:
-        List of pending task description strings.
+        List of due schedule description strings.
     """
-    return [task["title"] for task in list_actionable_tasks(workspace) if task.get("title")]
+    return [item["description"] for item in list_due_schedules(workspace) if item.get("description")]
 
 
 def init_agent_workspace(workspace: str, agent_name: str = "Turtle", human_name: str = "Human") -> None:
@@ -111,4 +111,4 @@ def init_agent_workspace(workspace: str, agent_name: str = "Turtle", human_name:
     if not memory_file.exists():
         memory_file.write_text("", encoding="utf-8")
 
-    init_task_store(workspace)
+    init_schedule_store(workspace)

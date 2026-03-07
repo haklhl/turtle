@@ -1,92 +1,234 @@
 import json
 import tempfile
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 
 from sea_turtle.core.tasks import (
-    apply_task_updates,
-    create_task,
-    extract_task_report,
-    list_actionable_tasks,
-    list_recent_tasks,
-    load_task_data,
-    save_task_data,
+    append_heartbeat_run,
+    append_schedule_run,
+    create_schedule,
+    is_heartbeat_due,
+    is_schedule_due,
+    list_due_schedules,
+    list_heartbeat_runs,
+    list_recent_schedules,
+    list_schedule_runs,
+    load_heartbeat_data,
+    load_schedule_data,
+    mark_heartbeat_started,
+    mark_schedules_started,
+    render_heartbeat_file,
+    render_schedule_file,
+    save_schedule_data,
+    update_heartbeat,
+    update_schedule,
 )
 
 
-class TaskStoreTests(unittest.TestCase):
-    def test_legacy_task_md_is_migrated(self):
+class ScheduleStoreTests(unittest.TestCase):
+    def test_legacy_task_json_is_migrated_to_disabled_schedules(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             workspace = Path(tmpdir)
-            (workspace / "task.md").write_text(
-                "# Tasks\n- [ ] first task\n- [x] finished task\n",
+            (workspace / "task.json").write_text(
+                json.dumps(
+                    {
+                        "tasks": [
+                            {"id": "task-1", "title": "old pending", "created_at": "2026-03-01T00:00:00+00:00"},
+                            {"id": "task-2", "title": "old done", "result": "ok"},
+                        ]
+                    },
+                    ensure_ascii=False,
+                ),
                 encoding="utf-8",
             )
 
-            data = load_task_data(str(workspace))
+            data = load_schedule_data(str(workspace))
 
-            self.assertEqual(len(data["tasks"]), 2)
-            self.assertEqual(data["tasks"][0]["title"], "first task")
-            self.assertEqual(data["tasks"][0]["status"], "pending")
-            self.assertEqual(data["tasks"][1]["status"], "done")
-            self.assertTrue((workspace / "task.json").exists())
+            self.assertEqual(len(data["schedules"]), 2)
+            self.assertEqual(data["schedules"][0]["status"], "disabled")
+            self.assertTrue((workspace / "schedule.json").exists())
 
-    def test_list_actionable_tasks_filters_finished_items(self):
+    def test_interval_schedule_becomes_due_after_interval(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             workspace = Path(tmpdir)
-            save_task_data(str(workspace), {
-                "tasks": [
-                    {"id": "task-1", "title": "pending", "status": "pending"},
-                    {"id": "task-2", "title": "working", "status": "in_progress"},
-                    {"id": "task-3", "title": "done", "status": "done"},
-                    {"id": "task-4", "title": "failed", "status": "failed"},
-                ]
-            })
+            schedule = create_schedule(
+                str(workspace),
+                author="default",
+                description="poll feed",
+                execution_type="script",
+                trigger={"type": "interval", "seconds": 300},
+                target={"command": "./scripts/check.sh"},
+            )
+            data = load_schedule_data(str(workspace))
+            data["schedules"][0]["created_at"] = "2026-03-07T00:00:00+00:00"
+            data["schedules"][0]["updated_at"] = "2026-03-07T00:00:00+00:00"
+            save_schedule_data(str(workspace), data)
+            schedule = load_schedule_data(str(workspace))["schedules"][0]
 
-            tasks = list_actionable_tasks(str(workspace))
-            self.assertEqual([task["id"] for task in tasks], ["task-1", "task-2"])
+            before_due = datetime(2026, 3, 7, 0, 4, 0, tzinfo=timezone.utc)
+            at_due = datetime(2026, 3, 7, 0, 5, 0, tzinfo=timezone.utc)
 
-    def test_apply_task_updates_writes_status_and_result(self):
+            self.assertFalse(is_schedule_due(schedule, now=before_due))
+            self.assertTrue(is_schedule_due(schedule, now=at_due))
+            due = list_due_schedules(str(workspace), now=at_due)
+            self.assertEqual([item["id"] for item in due], [schedule["id"]])
+
+    def test_daily_schedule_runs_once_per_day(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             workspace = Path(tmpdir)
-            save_task_data(str(workspace), {
-                "tasks": [
-                    {"id": "task-1", "title": "pending", "status": "pending"},
-                ]
-            })
+            schedule = create_schedule(
+                str(workspace),
+                author="default",
+                description="daily check",
+                execution_type="script",
+                trigger={"type": "daily", "time": "09:30", "timezone": "UTC"},
+                target={"command": "./scripts/daily.sh"},
+            )
 
-            applied = apply_task_updates(str(workspace), [
-                {"id": "task-1", "status": "done", "result": "finished", "notes": "ok"},
-            ])
+            due_time = datetime(2026, 3, 7, 9, 30, 0, tzinfo=timezone.utc)
+            self.assertTrue(is_schedule_due(schedule, now=due_time))
 
-            self.assertEqual(applied[0]["status"], "done")
-            saved = json.loads((workspace / "task.json").read_text(encoding="utf-8"))
-            self.assertEqual(saved["tasks"][0]["status"], "done")
-            self.assertEqual(saved["tasks"][0]["result"], "finished")
+            mark_schedules_started(str(workspace), [schedule["id"]], started_at="2026-03-07T09:30:01+00:00")
+            append_schedule_run(
+                str(workspace),
+                schedule["id"],
+                outcome="success",
+                summary="done",
+                started_at="2026-03-07T09:30:01+00:00",
+                finished_at="2026-03-07T09:30:10+00:00",
+            )
 
-    def test_extract_task_report_splits_summary_and_json(self):
-        reply = (
-            "SUMMARY:\n已完成 1 项。\n\n"
-            "TASK_REPORT:\n```json\n"
-            "{\"updates\":[{\"id\":\"task-1\",\"status\":\"done\",\"result\":\"ok\",\"notes\":\"\"}],"
-            "\"summary\":\"已完成 1 项。\"}\n```"
-        )
+            updated = load_schedule_data(str(workspace))["schedules"][0]
+            self.assertFalse(is_schedule_due(updated, now=datetime(2026, 3, 7, 10, 0, 0, tzinfo=timezone.utc)))
+            self.assertTrue(is_schedule_due(updated, now=datetime(2026, 3, 8, 9, 30, 0, tzinfo=timezone.utc)))
 
-        summary, report = extract_task_report(reply)
-        self.assertIn("已完成 1 项", summary)
-        self.assertEqual(report["updates"][0]["id"], "task-1")
-
-    def test_create_task_and_list_recent_tasks(self):
+    def test_mark_started_and_append_run_updates_counters_and_logs(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             workspace = Path(tmpdir)
-            first = create_task(str(workspace), "first task")
-            second = create_task(str(workspace), "second task", status="in_progress")
-            apply_task_updates(str(workspace), [{"id": first["id"], "status": "done", "result": "ok"}])
+            schedule = create_schedule(
+                str(workspace),
+                author="default",
+                description="script monitor",
+                execution_type="script",
+                trigger={"type": "interval", "seconds": 600},
+                target={"command": "./scripts/monitor.sh"},
+            )
 
-            recent = list_recent_tasks(str(workspace), limit=2)
-            self.assertEqual(len(recent), 2)
-            self.assertEqual(recent[0]["id"], first["id"])
-            self.assertEqual(recent[1]["id"], second["id"])
+            started = mark_schedules_started(str(workspace), [schedule["id"]], started_at="2026-03-07T00:10:00+00:00")
+            self.assertTrue(started[0]["is_running"])
+
+            append_schedule_run(
+                str(workspace),
+                schedule["id"],
+                outcome="noop",
+                summary="nothing changed",
+                output="stdout line",
+                started_at="2026-03-07T00:10:00+00:00",
+                finished_at="2026-03-07T00:10:03+00:00",
+            )
+
+            saved = load_schedule_data(str(workspace))["schedules"][0]
+            self.assertEqual(saved["run_count"], 1)
+            self.assertFalse(saved["is_running"])
+            self.assertEqual(saved["last_outcome"], "noop")
+
+            runs = list_schedule_runs(str(workspace), schedule_id=schedule["id"], limit=5)
+            self.assertEqual(len(runs), 1)
+            self.assertEqual(runs[0]["summary"], "nothing changed")
+
+    def test_update_schedule_can_disable_without_deleting_record(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            workspace = Path(tmpdir)
+            schedule = create_schedule(
+                str(workspace),
+                author="default",
+                description="watch mempool",
+                execution_type="script",
+                trigger={"type": "interval", "seconds": 120},
+                target={"command": "./scripts/watch.sh"},
+            )
+
+            updated = update_schedule(str(workspace), schedule["id"], status="disabled", description="watch mempool less often")
+            self.assertIsNotNone(updated)
+            self.assertEqual(updated["status"], "disabled")
+            self.assertEqual(updated["description"], "watch mempool less often")
+
+            recent = list_recent_schedules(str(workspace), limit=5)
+            self.assertEqual(recent[0]["id"], schedule["id"])
+
+    def test_render_schedule_file_includes_recent_runs(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            workspace = Path(tmpdir)
+            schedule = create_schedule(
+                str(workspace),
+                author="default",
+                description="daily brief",
+                execution_type="script",
+                trigger={"type": "daily", "time": "08:00", "timezone": "UTC"},
+                target={"command": "./scripts/brief.sh"},
+            )
+            mark_schedules_started(str(workspace), [schedule["id"]], started_at="2026-03-07T08:00:00+00:00")
+            append_schedule_run(
+                str(workspace),
+                schedule["id"],
+                outcome="success",
+                summary="brief sent",
+                finished_at="2026-03-07T08:00:05+00:00",
+            )
+
+            rendered = json.loads(render_schedule_file(str(workspace)))
+            self.assertEqual(rendered["schedules"][0]["id"], schedule["id"])
+            self.assertEqual(rendered["recent_runs"][0]["summary"], "brief sent")
+
+
+class HeartbeatStoreTests(unittest.TestCase):
+    def test_heartbeat_defaults_to_disabled_60_minutes(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            heartbeat = load_heartbeat_data(tmpdir)
+            self.assertFalse(heartbeat["enabled"])
+            self.assertEqual(heartbeat["interval_minutes"], 60)
+
+    def test_heartbeat_interval_is_persisted_and_minimum_is_enforced(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            heartbeat = update_heartbeat(tmpdir, enabled=True, interval_minutes=3)
+            self.assertTrue(heartbeat["enabled"])
+            self.assertEqual(heartbeat["interval_minutes"], 5)
+
+    def test_heartbeat_due_uses_persisted_last_run(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            update_heartbeat(tmpdir, enabled=True, interval_minutes=60)
+            heartbeat = load_heartbeat_data(tmpdir)
+            heartbeat["created_at"] = "2026-03-07T00:00:00+00:00"
+            heartbeat["updated_at"] = "2026-03-07T00:00:00+00:00"
+            from sea_turtle.core.tasks import save_heartbeat_data
+
+            save_heartbeat_data(tmpdir, heartbeat)
+
+            self.assertFalse(is_heartbeat_due(tmpdir, now=datetime(2026, 3, 7, 0, 59, 0, tzinfo=timezone.utc)))
+            self.assertTrue(is_heartbeat_due(tmpdir, now=datetime(2026, 3, 7, 1, 0, 0, tzinfo=timezone.utc)))
+
+    def test_heartbeat_runs_are_logged(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            update_heartbeat(tmpdir, enabled=True, interval_minutes=60)
+            mark_heartbeat_started(tmpdir, started_at="2026-03-07T01:00:00+00:00")
+            append_heartbeat_run(
+                tmpdir,
+                outcome="noop",
+                summary="nothing to do",
+                finished_at="2026-03-07T01:00:05+00:00",
+            )
+
+            heartbeat = load_heartbeat_data(tmpdir)
+            self.assertEqual(heartbeat["run_count"], 1)
+            self.assertEqual(heartbeat["last_result"], "nothing to do")
+
+            runs = list_heartbeat_runs(tmpdir, limit=20)
+            self.assertEqual(len(runs), 1)
+            self.assertEqual(runs[0]["summary"], "nothing to do")
+
+            rendered = json.loads(render_heartbeat_file(tmpdir))
+            self.assertEqual(rendered["recent_runs"][0]["summary"], "nothing to do")
 
 
 if __name__ == "__main__":

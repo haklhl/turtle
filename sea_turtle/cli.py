@@ -288,7 +288,7 @@ def _agent_add(args, config):
         "human_name": "Human",
         "workspace": workspace,
         "model": model,
-        "tools": ["shell", "memory", "task"],
+        "tools": ["shell", "memory", "schedule"],
         "sandbox": sandbox,
         "telegram": {
             "bot_token_env": f"TELEGRAM_BOT_TOKEN_{agent_id.upper()}",

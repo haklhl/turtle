@@ -1,27 +1,21 @@
-"""Heartbeat system for periodic structured task checking."""
+"""Scheduler tick loop for agent-scoped recurring jobs and heartbeat."""
 
 import asyncio
 import logging
 from typing import Callable, Awaitable
 
-from sea_turtle.core.tasks import list_actionable_tasks
-
 logger = logging.getLogger("sea_turtle.heartbeat")
 
 
 class Heartbeat:
-    """Periodically check agent task.json for actionable tasks.
-
-    When pending tasks are found, notifies the agent to process them.
-    When no tasks exist, the heartbeat sleeps to conserve resources.
-    """
+    """Periodically check agent schedules and dispatch due jobs."""
 
     def __init__(
         self,
         agent_id: str,
         workspace: str,
         interval: int = 300,
-        on_tasks_found: Callable[[str, list[dict]], Awaitable[None]] | None = None,
+        on_tasks_found: Callable[[str], Awaitable[None]] | None = None,
     ):
         """Initialize heartbeat.
 
@@ -29,8 +23,8 @@ class Heartbeat:
             agent_id: Agent identifier.
             workspace: Path to agent workspace.
             interval: Check interval in seconds.
-            on_tasks_found: Async callback when pending tasks are found.
-                            Receives (agent_id, list_of_tasks).
+            on_tasks_found: Async callback for each scheduler tick.
+                            Receives (agent_id).
         """
         self.agent_id = agent_id
         self.workspace = workspace
@@ -75,14 +69,9 @@ class Heartbeat:
                 break
 
     async def _check(self) -> None:
-        """Check for pending tasks."""
-        pending = list_actionable_tasks(self.workspace)
-        if pending:
-            logger.info(f"Agent '{self.agent_id}' has {len(pending)} pending task(s)")
-            if self.on_tasks_found:
-                await self.on_tasks_found(self.agent_id, pending)
-        else:
-            logger.debug(f"Agent '{self.agent_id}' has no pending tasks, resting.")
+        """Run one scheduler tick."""
+        if self.on_tasks_found:
+            await self.on_tasks_found(self.agent_id)
 
     @property
     def is_running(self) -> bool:
