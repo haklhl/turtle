@@ -1,14 +1,16 @@
 """Telegram Bot channel implementation."""
 
 import asyncio
+import html
 import logging
 import os
+import re
 import time
 from pathlib import Path
 from typing import Any, TYPE_CHECKING
 
 from telegram import BotCommand, Update
-from telegram.constants import ChatAction
+from telegram.constants import ChatAction, ParseMode
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -32,6 +34,8 @@ ALLOWED_DOCUMENT_SUFFIXES = {
 }
 DEFAULT_ATTACHMENT_RETENTION_HOURS = 24 * 7
 MAX_INBOUND_ATTACHMENT_BYTES = 50 * 1024 * 1024
+TELEGRAM_TEXT_LIMIT = 4096
+TELEGRAM_RENDER_CHUNK_SIZE = 3500
 
 BOT_COMMANDS = [
     BotCommand("start", "🐢 启动 / 欢迎信息"),
@@ -46,6 +50,94 @@ BOT_COMMANDS = [
     BotCommand("effort", "🧠 查看/切换 Codex 思考深度"),
     BotCommand("restart", "♻️ 重启当前 Agent"),
 ]
+
+FENCED_CODE_RE = re.compile(r"```(?:[^\n`]*)\n?(.*?)```", re.DOTALL)
+INLINE_CODE_RE = re.compile(r"`([^`\n]+)`")
+BOLD_RE = re.compile(r"\*\*(.+?)\*\*", re.DOTALL)
+
+
+def _split_telegram_chunks(text: str, limit: int = TELEGRAM_RENDER_CHUNK_SIZE) -> list[str]:
+    """Split raw text into Telegram-sized chunks before HTML rendering."""
+    if len(text) <= limit:
+        return [text]
+
+    chunks: list[str] = []
+    current = ""
+    paragraphs = text.split("\n\n")
+
+    for paragraph in paragraphs:
+        candidate = paragraph if not current else f"{current}\n\n{paragraph}"
+        if len(candidate) <= limit:
+            current = candidate
+            continue
+        if current:
+            chunks.append(current)
+            current = ""
+        if len(paragraph) <= limit:
+            current = paragraph
+            continue
+        lines = paragraph.splitlines()
+        for line in lines:
+            candidate = line if not current else f"{current}\n{line}"
+            if len(candidate) <= limit:
+                current = candidate
+                continue
+            if current:
+                chunks.append(current)
+                current = ""
+            while len(line) > limit:
+                chunks.append(line[:limit])
+                line = line[limit:]
+            current = line
+
+    if current:
+        chunks.append(current)
+
+    return chunks or [text[:limit]]
+
+
+def _convert_inline_markdown_to_html(text: str) -> str:
+    text = INLINE_CODE_RE.sub(lambda m: f"<code>{m.group(1)}</code>", text)
+    text = BOLD_RE.sub(lambda m: f"<b>{m.group(1)}</b>", text)
+    return text
+
+
+def markdown_to_telegram_html(text: str) -> str:
+    """Convert a small Markdown subset into Telegram-safe HTML."""
+    placeholders: dict[str, str] = {}
+
+    def replace_fence(match: re.Match[str]) -> str:
+        key = f"__CODE_BLOCK_{len(placeholders)}__"
+        code = html.escape(match.group(1).strip("\n"))
+        placeholders[key] = f"<pre><code>{code}</code></pre>"
+        return key
+
+    text = FENCED_CODE_RE.sub(replace_fence, text)
+    lines = text.splitlines()
+    rendered: list[str] = []
+    quote_buffer: list[str] = []
+
+    def flush_quote() -> None:
+        if not quote_buffer:
+            return
+        quote_text = "\n".join(_convert_inline_markdown_to_html(html.escape(line)) for line in quote_buffer)
+        rendered.append(f"<blockquote>{quote_text}</blockquote>")
+        quote_buffer.clear()
+
+    for raw_line in lines:
+        stripped = raw_line.lstrip()
+        if stripped.startswith(">"):
+            content = stripped[1:].lstrip()
+            quote_buffer.append(content)
+            continue
+        flush_quote()
+        rendered.append(_convert_inline_markdown_to_html(html.escape(raw_line)))
+
+    flush_quote()
+    output = "\n".join(rendered)
+    for key, value in placeholders.items():
+        output = output.replace(key, value)
+    return output
 
 
 class TelegramChannel(BaseChannel):
@@ -154,15 +246,17 @@ class TelegramChannel(BaseChannel):
 
         if app and app.bot:
             try:
-                # Telegram has a 4096 char limit per message
-                if len(text) <= 4096:
-                    await app.bot.send_message(chat_id=chat_id, text=text)
-                else:
-                    # Split into chunks
-                    for i in range(0, len(text), 4096):
-                        chunk = text[i:i + 4096]
-                        await app.bot.send_message(chat_id=chat_id, text=chunk)
-                        await asyncio.sleep(0.3)
+                for raw_chunk in _split_telegram_chunks(text):
+                    chunk = markdown_to_telegram_html(raw_chunk)
+                    if len(chunk) > TELEGRAM_TEXT_LIMIT:
+                        # Fallback to escaped plain text if HTML expansion overflows.
+                        chunk = html.escape(raw_chunk[:TELEGRAM_TEXT_LIMIT])
+                    await app.bot.send_message(
+                        chat_id=chat_id,
+                        text=chunk,
+                        parse_mode=ParseMode.HTML,
+                    )
+                    await asyncio.sleep(0.3)
             except Exception as e:
                 logger.error(f"Failed to send Telegram message: {e}")
 
