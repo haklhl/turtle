@@ -272,6 +272,12 @@ class AgentWorker:
             self.contexts[conversation_id] = ContextManager(self.config, persistence_path=context_path)
         return conversation_id, self.contexts[conversation_id]
 
+    def _reset_context(self, source: str, chat_id: Any = None, user_id: Any = None) -> str:
+        """Reset a conversation context, loading persisted state first if needed."""
+        conversation_id, context = self._get_context(source, chat_id, user_id)
+        context.reset()
+        return conversation_id
+
     def _get_tools(self) -> list[ToolDefinition]:
         """Get tool definitions based on agent config."""
         enabled_tools = self.agent_config.get("tools", ["shell", "memory", "task"])
@@ -568,12 +574,8 @@ class AgentWorker:
 
                 elif msg_type == "reset_context":
                     source = msg.get("source", "unknown")
-                    conversation_id = self._conversation_id(source, msg.get("chat_id"), msg.get("user_id"))
-                    if conversation_id in self.contexts:
-                        self.contexts[conversation_id].reset()
-                        self.logger.info(f"Context reset for {conversation_id}")
-                    else:
-                        self.logger.info(f"No context to reset for {conversation_id}")
+                    conversation_id = self._reset_context(source, msg.get("chat_id"), msg.get("user_id"))
+                    self.logger.info(f"Context reset for {conversation_id}")
 
                 elif msg_type == "get_stats":
                     source = msg.get("source", "unknown")
