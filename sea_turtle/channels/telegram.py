@@ -53,6 +53,12 @@ BOT_COMMANDS = [
 
 FENCED_CODE_RE = re.compile(r"```(?:[^\n`]*)\n?(.*?)```", re.DOTALL)
 INLINE_CODE_RE = re.compile(r"`([^`\n]+)`")
+MARKDOWN_LINK_RE = re.compile(r"\[([^\]\n]+)\]\((https?://[^\s)]+)\)")
+UNDERLINE_RE = re.compile(r"__([^_\n]+?)__")
+SPOILER_RE = re.compile(r"\|\|([^\n|]+?)\|\|")
+STRIKE_RE = re.compile(r"~~([^~\n]+?)~~")
+ITALIC_STAR_RE = re.compile(r"(?<!\*)\*([^*\n]+?)\*(?!\*)")
+ITALIC_UNDERSCORE_RE = re.compile(r"(?<!_)_([^_\n]+?)_(?!_)")
 BOLD_RE = re.compile(r"\*\*(.+?)\*\*", re.DOTALL)
 
 
@@ -97,8 +103,14 @@ def _split_telegram_chunks(text: str, limit: int = TELEGRAM_RENDER_CHUNK_SIZE) -
 
 
 def _convert_inline_markdown_to_html(text: str) -> str:
+    text = MARKDOWN_LINK_RE.sub(lambda m: f'<a href="{m.group(2)}">{m.group(1)}</a>', text)
+    text = UNDERLINE_RE.sub(lambda m: f"<u>{m.group(1)}</u>", text)
+    text = SPOILER_RE.sub(lambda m: f"<tg-spoiler>{m.group(1)}</tg-spoiler>", text)
+    text = STRIKE_RE.sub(lambda m: f"<s>{m.group(1)}</s>", text)
     text = INLINE_CODE_RE.sub(lambda m: f"<code>{m.group(1)}</code>", text)
     text = BOLD_RE.sub(lambda m: f"<b>{m.group(1)}</b>", text)
+    text = ITALIC_STAR_RE.sub(lambda m: f"<i>{m.group(1)}</i>", text)
+    text = ITALIC_UNDERSCORE_RE.sub(lambda m: f"<i>{m.group(1)}</i>", text)
     return text
 
 
@@ -107,7 +119,7 @@ def markdown_to_telegram_html(text: str) -> str:
     placeholders: dict[str, str] = {}
 
     def replace_fence(match: re.Match[str]) -> str:
-        key = f"__CODE_BLOCK_{len(placeholders)}__"
+        key = f"CODEBLOCKTOKEN{len(placeholders)}"
         code = html.escape(match.group(1).strip("\n"))
         placeholders[key] = f"<pre><code>{code}</code></pre>"
         return key

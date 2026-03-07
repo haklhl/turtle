@@ -14,6 +14,20 @@ class TelegramFormattingTests(unittest.TestCase):
         self.assertIn("<code>code</code>", html)
         self.assertIn("<pre><code>print", html)
 
+    def test_converts_link_italic_strike_underline_and_spoiler(self):
+        text = (
+            "[OpenAI](https://openai.com) "
+            "*italic* _alt_ "
+            "~~strike~~ __under__ ||secret||"
+        )
+        html = markdown_to_telegram_html(text)
+        self.assertIn('<a href="https://openai.com">OpenAI</a>', html)
+        self.assertIn("<i>italic</i>", html)
+        self.assertIn("<i>alt</i>", html)
+        self.assertIn("<s>strike</s>", html)
+        self.assertIn("<u>under</u>", html)
+        self.assertIn("<tg-spoiler>secret</tg-spoiler>", html)
+
     def test_converts_blockquote(self):
         text = "> quoted\n> still quoted\nplain"
         html = markdown_to_telegram_html(text)
