@@ -334,7 +334,7 @@ class Daemon:
             if heartbeat.get("last_outcome"):
                 lines.append(f"- Last Outcome: {heartbeat.get('last_outcome')}")
             if last_result:
-                lines.append(f"- Last Result: {last_result[:200]}")
+                lines.append(f"- Last Result: {last_result[:500]}")
             return "\n".join(lines)
 
         elif cmd in {"/tasks", "/schedules"}:
