@@ -60,7 +60,7 @@ AGENT_CONTEXT_PROMPT = """\
 - Current Channel: {channel_name}
 - Available Tools: {tools_list}
 - OS: {os_info}
-- Current Time: {current_time}
+- Current Date: {current_date}
 """
 
 SKILLS_SECTION = """\
@@ -170,7 +170,7 @@ def build_system_prompt(
         channel_name=channel_name,
         tools_list=", ".join(tools) if tools else "none",
         os_info=os_info["os_info"],
-        current_time=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
+        current_date=datetime.now(timezone.utc).strftime("%Y-%m-%d UTC"),
     )
     parts.append(context)
 
