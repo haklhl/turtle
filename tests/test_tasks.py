@@ -4,6 +4,18 @@ import unittest
 from datetime import datetime, timezone
 from pathlib import Path
 
+from sea_turtle.core.jobs import (
+    apply_job_step_result,
+    create_job,
+    expire_job_if_needed,
+    extract_job_step_report,
+    get_active_job,
+    is_job_due,
+    list_job_runs,
+    load_job_data,
+    record_job_failure,
+    request_job_cancel,
+)
 from sea_turtle.core.tasks import (
     append_heartbeat_run,
     append_schedule_run,
@@ -229,6 +241,120 @@ class HeartbeatStoreTests(unittest.TestCase):
 
             rendered = json.loads(render_heartbeat_file(tmpdir))
             self.assertEqual(rendered["recent_runs"][0]["summary"], "nothing to do")
+
+
+class JobStoreTests(unittest.TestCase):
+    def test_create_job_starts_as_active_and_due(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            job = create_job(
+                tmpdir,
+                source="telegram",
+                chat_id=1,
+                user_id=2,
+                title="alphaTON",
+                user_request="给你个任务，整理资料",
+            )
+
+            active = get_active_job(tmpdir)
+            self.assertEqual(active["id"], job["id"])
+            self.assertTrue(is_job_due(active, now=datetime.now(timezone.utc)))
+
+    def test_apply_job_step_result_persists_progress(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            job = create_job(
+                tmpdir,
+                source="telegram",
+                chat_id=1,
+                user_id=2,
+                title="alphaTON",
+                user_request="整理资料",
+            )
+
+            updated = apply_job_step_result(
+                tmpdir,
+                job["id"],
+                summary="done rewards",
+                output="summary text",
+                started_at="2026-03-12T00:00:00+00:00",
+                phase_after="collect_growth",
+                progress_text="已完成奖励数据抓取",
+                working_notes=["奖励数据已保存"],
+                artifacts_added=["/tmp/rewards.md"],
+                status="waiting",
+                cooldown_seconds=300,
+            )
+
+            self.assertEqual(updated["status"], "waiting")
+            self.assertEqual(updated["current_phase"], "collect_growth")
+            self.assertIn("奖励数据已保存", updated["working_notes"])
+            self.assertEqual(updated["step_count"], 1)
+            runs = list_job_runs(tmpdir, job_id=job["id"], limit=5)
+            self.assertEqual(runs[0]["summary"], "done rewards")
+
+    def test_record_timeout_does_not_fail_job_immediately(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            job = create_job(
+                tmpdir,
+                source="telegram",
+                chat_id=1,
+                user_id=2,
+                title="alphaTON",
+                user_request="整理资料",
+            )
+
+            updated = record_job_failure(
+                tmpdir,
+                job["id"],
+                error_type="timeout",
+                error_text="命令超时（300秒）",
+                started_at="2026-03-12T00:00:00+00:00",
+            )
+
+            self.assertEqual(updated["status"], "waiting")
+            self.assertEqual(updated["consecutive_timeouts"], 1)
+            self.assertEqual(updated["recovery_mode"], "narrow_scope")
+
+    def test_cancel_waiting_job_becomes_cancelled(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            job = create_job(
+                tmpdir,
+                source="telegram",
+                chat_id=1,
+                user_id=2,
+                title="alphaTON",
+                user_request="整理资料",
+            )
+            updated = request_job_cancel(tmpdir, job["id"])
+            self.assertEqual(updated["status"], "cancelled")
+
+    def test_expire_job_marks_it_failed(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            job = create_job(
+                tmpdir,
+                source="telegram",
+                chat_id=1,
+                user_id=2,
+                title="alphaTON",
+                user_request="整理资料",
+            )
+            data = load_job_data(tmpdir)
+            data["jobs"][0]["deadline_at"] = "2026-03-11T00:00:00+00:00"
+            from sea_turtle.core.jobs import save_job_data
+
+            save_job_data(tmpdir, data)
+            updated = expire_job_if_needed(tmpdir, job["id"])
+            self.assertEqual(updated["status"], "failed")
+
+    def test_extract_job_step_report_parses_json(self):
+        reply = (
+            "SUMMARY:\n已完成一步。\n\n"
+            "JOB_STEP:\n```json\n"
+            "{\"status\":\"waiting\",\"progress_text\":\"已完成一步\",\"current_phase\":\"next\","
+            "\"working_notes\":[\"a\"],\"artifacts_added\":[],\"result_summary\":\"\",\"result_file\":\"\",\"cooldown_seconds\":300}\n```"
+        )
+        summary, report = extract_job_step_report(reply)
+        self.assertIn("已完成一步", summary)
+        self.assertEqual(report["current_phase"], "next")
 
 
 if __name__ == "__main__":

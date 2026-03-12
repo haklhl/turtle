@@ -3,6 +3,7 @@
 import os
 from pathlib import Path
 
+from sea_turtle.core.jobs import init_job_store
 from sea_turtle.core.tasks import init_schedule_store, list_due_schedules, render_schedule_file
 
 
@@ -112,3 +113,4 @@ def init_agent_workspace(workspace: str, agent_name: str = "Turtle", human_name:
         memory_file.write_text("", encoding="utf-8")
 
     init_schedule_store(workspace)
+    init_job_store(workspace)

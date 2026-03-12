@@ -44,6 +44,8 @@ BOT_COMMANDS = [
     BotCommand("context", "📊 查看上下文用量"),
     BotCommand("prompt", "📜 查看当前 System Prompt"),
     BotCommand("heartbeat", "🫀 查看心跳状态与结果"),
+    BotCommand("job", "🧩 查看后台任务状态"),
+    BotCommand("job_cancel", "⏹️ 中断当前后台任务"),
     BotCommand("schedules", "⏰ 查看最近定时作业"),
     BotCommand("tasks", "🗂️ 查看最近定时作业"),
     BotCommand("usage", "💰 查看 Token 用量与费用"),
@@ -198,6 +200,8 @@ class TelegramChannel(BaseChannel):
             app.add_handler(CommandHandler("context", self._make_command_handler(agent_id)))
             app.add_handler(CommandHandler("prompt", self._make_command_handler(agent_id)))
             app.add_handler(CommandHandler("heartbeat", self._make_command_handler(agent_id)))
+            app.add_handler(CommandHandler("job", self._make_command_handler(agent_id)))
+            app.add_handler(CommandHandler("job_cancel", self._make_command_handler(agent_id)))
             app.add_handler(CommandHandler("restart", self._make_command_handler(agent_id)))
             app.add_handler(CommandHandler("schedules", self._make_command_handler(agent_id)))
             app.add_handler(CommandHandler("tasks", self._make_command_handler(agent_id)))

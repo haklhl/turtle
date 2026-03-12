@@ -12,6 +12,11 @@ from typing import Any
 
 from sea_turtle.config.loader import get_agent_config
 from sea_turtle.core.context import ContextManager
+from sea_turtle.core.jobs import (
+    extract_job_step_report,
+    list_job_runs,
+    render_job_file,
+)
 from sea_turtle.core.memory import MemoryManager
 from sea_turtle.core.rules import load_rules, load_skills
 from sea_turtle.core.shell import ShellExecutor
@@ -128,6 +133,33 @@ HEARTBEAT_RUN_READ_TOOL = ToolDefinition(
     },
 )
 
+JOB_READ_TOOL = ToolDefinition(
+    name="read_jobs",
+    description="Read the current async job state and recent runs for this agent.",
+    parameters={
+        "type": "object",
+        "properties": {},
+    },
+)
+
+JOB_RUN_READ_TOOL = ToolDefinition(
+    name="read_job_runs",
+    description="Read recent step logs for async jobs.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "id": {
+                "type": "string",
+                "description": "Optional job id such as job-1.",
+            },
+            "limit": {
+                "type": "integer",
+                "description": "Maximum number of job run entries to return.",
+            },
+        },
+    },
+)
+
 SCHEDULE_CREATE_TOOL = ToolDefinition(
     name="create_schedule",
     description="Create one recurring script schedule for this agent. The command must start with a file path inside the agent workspace.",
@@ -230,6 +262,8 @@ ALL_TOOLS = {
         SCHEDULE_RUN_READ_TOOL,
         SCHEDULE_CREATE_TOOL,
         SCHEDULE_UPDATE_TOOL,
+        JOB_READ_TOOL,
+        JOB_RUN_READ_TOOL,
         HEARTBEAT_READ_TOOL,
         HEARTBEAT_RUN_READ_TOOL,
         HEARTBEAT_UPDATE_TOOL,
@@ -239,11 +273,14 @@ ALL_TOOLS = {
         SCHEDULE_RUN_READ_TOOL,
         SCHEDULE_CREATE_TOOL,
         SCHEDULE_UPDATE_TOOL,
+        JOB_READ_TOOL,
+        JOB_RUN_READ_TOOL,
         HEARTBEAT_READ_TOOL,
         HEARTBEAT_RUN_READ_TOOL,
         HEARTBEAT_UPDATE_TOOL,
     ],
     "heartbeat": [HEARTBEAT_READ_TOOL, HEARTBEAT_RUN_READ_TOOL, HEARTBEAT_UPDATE_TOOL],
+    "job": [JOB_READ_TOOL, JOB_RUN_READ_TOOL],
 }
 IMAGE_ATTACHMENT_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
 
@@ -509,6 +546,73 @@ class AgentWorker:
             "error": "",
         }
 
+    async def _run_job_step(self, msg: dict) -> dict[str, Any]:
+        job = msg.get("job") or {}
+        job_id = str(job.get("id") or "")
+        started_at = str(msg.get("started_at") or "")
+        step_index = int(job.get("step_count") or 0) + 1
+        recent_runs = list_job_runs(self.workspace, job_id=job_id, limit=3)
+        history_json = json.dumps(recent_runs, ensure_ascii=False, indent=2)
+        job_json = json.dumps(job, ensure_ascii=False, indent=2)
+        user_message = (
+            "You are executing one async background job step for this agent.\n"
+            "Do exactly one small, concrete next step.\n"
+            "Do not try to finish the whole job in one step.\n"
+            "If the previous step timed out or failed, narrow the scope and produce a smaller intermediate result.\n"
+            "If useful, save intermediate files in the workspace so later steps can continue.\n"
+            "If the user asked for a final document, only mark the job completed when the document is ready.\n\n"
+            f"Current job state:\n{job_json}\n\n"
+            f"Recent job runs:\n{history_json}\n\n"
+            "Return exactly this format:\n"
+            "SUMMARY:\n<concise Chinese summary>\n\n"
+            "JOB_STEP:\n```json\n"
+            "{\"status\":\"waiting|completed|failed\","
+            "\"progress_text\":\"...\","
+            "\"current_phase\":\"...\","
+            "\"working_notes\":[\"...\"],"
+            "\"artifacts_added\":[\"/absolute/path\"],"
+            "\"result_summary\":\"...\","
+            "\"result_file\":\"/absolute/path/or/empty\","
+            "\"cooldown_seconds\":300}\n"
+            "```\n\n"
+            "Rules:\n"
+            f"- This is step {step_index}.\n"
+            "- Keep the step small and stable.\n"
+            "- Use status=waiting if more work remains.\n"
+            "- Use status=completed only when the final deliverable is ready.\n"
+            "- Use status=failed only for truly unrecoverable situations.\n"
+        )
+        reply = await self._process_message(
+            user_message,
+            source="job",
+            chat_id=f"{job_id}:step:{step_index}",
+            user_id=self.agent_id,
+        )
+        summary, report = extract_job_step_report(reply or "")
+        if not report:
+            return {
+                "type": "job_result",
+                "agent_id": self.agent_id,
+                "job_id": job_id,
+                "source": "job",
+                "started_at": started_at,
+                "outcome": "parse_error",
+                "summary": "Job step did not return a valid JOB_STEP report.",
+                "output": reply or "",
+                "error": "Job step did not return a valid JOB_STEP report.",
+            }
+        return {
+            "type": "job_result",
+            "agent_id": self.agent_id,
+            "job_id": job_id,
+            "source": "job",
+            "started_at": started_at,
+            "outcome": "success",
+            "summary": summary.replace("SUMMARY:", "", 1).strip() if summary else "",
+            "output": reply or "",
+            "report": report,
+        }
+
     async def _handle_tool_call(self, name: str, arguments: dict) -> str:
         """Execute a tool call and return the result string."""
         self.logger.info(f"Tool call: {name}({json.dumps(arguments, ensure_ascii=False)[:200]})")
@@ -554,6 +658,18 @@ class AgentWorker:
             runs = list_schedule_runs(
                 self.workspace,
                 schedule_id=str(arguments.get("id") or "").strip() or None,
+                limit=max(1, min(int(arguments.get("limit") or 20), 100)),
+            )
+            return json.dumps(runs, ensure_ascii=False, indent=2) if runs else "[]"
+
+        elif name == "read_jobs":
+            content = render_job_file(self.workspace, include_recent_runs=True, run_limit=10)
+            return content if content else "(no jobs)"
+
+        elif name == "read_job_runs":
+            runs = list_job_runs(
+                self.workspace,
+                job_id=str(arguments.get("id") or "").strip() or None,
                 limit=max(1, min(int(arguments.get("limit") or 20), 100)),
             )
             return json.dumps(runs, ensure_ascii=False, indent=2) if runs else "[]"
@@ -770,6 +886,27 @@ class AgentWorker:
                 })
             return
 
+        if msg.get("type") == "job_run":
+            try:
+                result = await self._run_job_step(msg)
+                self.outbox.put(result)
+            except Exception as e:
+                error_text = str(e)
+                error_type = "timeout" if "超时" in error_text or "timeout" in error_text.lower() else "runtime_error"
+                self.logger.error(f"Error processing job run: {e}", exc_info=True)
+                self.outbox.put({
+                    "type": "job_result",
+                    "agent_id": self.agent_id,
+                    "job_id": str((msg.get("job") or {}).get("id") or ""),
+                    "source": "job",
+                    "started_at": str(msg.get("started_at") or ""),
+                    "outcome": error_type,
+                    "summary": error_text,
+                    "output": "",
+                    "error": error_text,
+                })
+            return
+
         user_text = msg.get("content", "")
         source = msg.get("source", "unknown")
         self.logger.info(f"Processing message from {source}: {user_text[:100]}...")
@@ -848,7 +985,7 @@ class AgentWorker:
                     break
 
                 msg_type = msg.get("type", "")
-                if msg_type in {"message", "heartbeat", "schedule_run", "heartbeat_run"}:
+                if msg_type in {"message", "heartbeat", "schedule_run", "heartbeat_run", "job_run"}:
                     await self._process_incoming_message(msg)
 
                 elif msg_type == "set_model":

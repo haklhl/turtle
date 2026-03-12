@@ -15,6 +15,20 @@ from sea_turtle.config.loader import load_config, get_agent_config, save_config
 from sea_turtle.core.agent import AgentManager
 from sea_turtle.core.heartbeat import Heartbeat
 from sea_turtle.core.memory import MemoryManager
+from sea_turtle.core.jobs import (
+    ACTIVE_JOB_STATUSES,
+    apply_job_step_result,
+    create_job,
+    expire_job_if_needed,
+    get_active_job,
+    get_job,
+    is_job_due,
+    list_job_runs,
+    list_recent_jobs,
+    mark_job_started,
+    record_job_failure,
+    request_job_cancel,
+)
 from sea_turtle.core.rules import load_rules, load_skills
 from sea_turtle.core.stickers import pick_sticker_for_emotion
 from sea_turtle.core.token_counter import TokenCounter
@@ -107,6 +121,80 @@ class Daemon:
             channel_name=source,
         )
 
+    @staticmethod
+    def _is_explicit_job_request(text: str) -> bool:
+        lowered = (text or "").strip().lower()
+        signals = (
+            "给你个任务",
+            "交给你个任务",
+            "给你一个任务",
+            "交给你一个任务",
+            "后台处理",
+            "帮我整理一份资料",
+        )
+        return any(signal in lowered for signal in signals)
+
+    @staticmethod
+    def _looks_heavy_request(text: str) -> bool:
+        lowered = (text or "").strip().lower()
+        keywords = [
+            "整理",
+            "调研",
+            "研究",
+            "分析",
+            "报告",
+            "文档",
+            "资料",
+            "链上",
+            "发我",
+            "文件",
+            "markdown",
+            "md文档",
+        ]
+        matched = sum(1 for keyword in keywords if keyword in lowered)
+        lines = [line for line in (text or "").splitlines() if line.strip()]
+        return matched >= 3 or len(lines) >= 4 or len(text or "") >= 180
+
+    def _should_start_background_job(self, text: str, attachments: list[str] | None = None) -> bool:
+        if attachments:
+            return False
+        return self._is_explicit_job_request(text) or self._looks_heavy_request(text)
+
+    @staticmethod
+    def _derive_job_title(text: str) -> str:
+        stripped = (text or "").strip()
+        if not stripped:
+            return "后台任务"
+        first_line = stripped.splitlines()[0].strip()
+        title = first_line[:60]
+        for prefix in ("给你个任务", "给你一个任务", "交给你个任务", "交给你一个任务"):
+            if title.startswith(prefix):
+                title = title[len(prefix):].strip(" ：:，,")
+        return title or "后台任务"
+
+    @staticmethod
+    def _format_job_status(job: dict[str, Any]) -> str:
+        if not job:
+            return "🧩 当前没有后台任务。"
+        next_run_at = (job.get("next_run_at") or "").replace("T", " ")
+        lines = [
+            "🧩 Current Job:",
+            f"- ID: {job.get('id', '?')}",
+            f"- Status: {job.get('status', '?')}",
+            f"- Title: {job.get('title', '') or '(untitled)'}",
+            f"- Phase: {job.get('current_phase', '') or 'queued'}",
+            f"- Progress: {job.get('progress_text', '') or '暂无进度'}",
+            f"- Steps: {job.get('step_count', 0)}/{job.get('max_steps', 0)}",
+            f"- Cooldown: {job.get('cooldown_seconds', 0)}s",
+        ]
+        if next_run_at:
+            lines.append(f"- Next Run: {next_run_at}")
+        if job.get("result_summary"):
+            lines.append(f"- Summary: {str(job.get('result_summary'))[:300]}")
+        if job.get("last_error"):
+            lines.append(f"- Last Error: {str(job.get('last_error'))[:300]}")
+        return "\n".join(lines)
+
     def _write_prompt_export(self, agent_id: str, source: str, prompt: str) -> str:
         agent_cfg = get_agent_config(self.config, agent_id) or {}
         workspace = Path(agent_cfg.get("workspace", f"~/.sea_turtle/agents/{agent_id}")).expanduser()
@@ -131,12 +219,13 @@ class Daemon:
         # Start heartbeats for each agent
         heartbeat_cfg = self.config.get("heartbeat", {})
         if heartbeat_cfg.get("enabled", True):
+            scheduler_tick_seconds = min(int(heartbeat_cfg.get("interval_seconds", 300)), 30)
             for agent_id, agent_cfg in self.config.get("agents", {}).items():
                 workspace = str(Path(agent_cfg.get("workspace", f"~/.sea_turtle/agents/{agent_id}")).expanduser().resolve())
                 hb = Heartbeat(
                     agent_id=agent_id,
                     workspace=workspace,
-                    interval=heartbeat_cfg.get("interval_seconds", 300),
+                    interval=scheduler_tick_seconds,
                     on_tasks_found=self._on_tasks_found,
                 )
                 self.heartbeats[agent_id] = hb
@@ -234,6 +323,8 @@ class Daemon:
                 "/context — Show context stats\n"
                 "/prompt — Show current final system prompt (owner only)\n"
                 "/heartbeat — Show heartbeat status and latest result\n"
+                "/job — Show current background job status\n"
+                "/job_cancel — Cancel the current background job\n"
                 "/schedules — Show recent schedules\n"
                 "/tasks — Alias of /schedules\n"
                 "/restart — Restart agent process\n"
@@ -337,6 +428,26 @@ class Daemon:
                 lines.append(f"- Last Result: {last_result[:500]}")
             return "\n".join(lines)
 
+        elif cmd == "/job":
+            workspace = (get_agent_config(self.config, agent_id) or {}).get("workspace", f"~/.sea_turtle/agents/{agent_id}")
+            job = get_active_job(workspace)
+            if not job:
+                recent = list_recent_jobs(workspace, limit=1)
+                job = recent[0] if recent else None
+            return self._format_job_status(job or {})
+
+        elif cmd == "/job_cancel":
+            workspace = (get_agent_config(self.config, agent_id) or {}).get("workspace", f"~/.sea_turtle/agents/{agent_id}")
+            job = get_active_job(workspace)
+            if not job:
+                return "🧩 当前没有可取消的后台任务。"
+            updated = request_job_cancel(workspace, str(job.get("id") or ""))
+            if not updated:
+                return "⚠️ 取消后台任务失败。"
+            if updated.get("status") == "cancelled":
+                return f"✅ 已取消后台任务 {updated.get('id')}。"
+            return f"⏸️ 已请求取消后台任务 {updated.get('id')}，会在当前步骤结束后停止。"
+
         elif cmd in {"/tasks", "/schedules"}:
             workspace = (get_agent_config(self.config, agent_id) or {}).get("workspace", f"~/.sea_turtle/agents/{agent_id}")
             schedules = list_recent_schedules(workspace, limit=20)
@@ -383,6 +494,7 @@ class Daemon:
                 workspace = agent_cfg.get("workspace", f"~/.sea_turtle/agents/{agent_id}")
                 heartbeat = load_heartbeat_data(workspace)
                 enabled_schedule_count = len(list_schedules(workspace, include_disabled=False))
+                active_job = get_active_job(workspace)
                 provider = resolve_provider(
                     agent_cfg.get("model", self.config.get("llm", {}).get("default_model", "")),
                     self.config.get("llm", {}).get("default_provider", "google"),
@@ -430,6 +542,7 @@ class Daemon:
                     f"\n  Heartbeat: {'enabled' if heartbeat.get('enabled') else 'disabled'}"
                     f"\n  Heartbeat Interval: {heartbeat.get('interval_minutes', 60)} min"
                     f"\n  Enabled Schedules: {enabled_schedule_count}"
+                    f"\n  Active Job: {active_job.get('id') if active_job else 'none'}"
                     f"{codex_lines}{runtime_lines}\n"
                     f"  PID: {handle.pid or 'N/A'}\n"
                     f"  Uptime: {uptime_min:.1f} min\n"
@@ -527,6 +640,46 @@ class Daemon:
             asyncio.create_task(self._handle_and_reply_command(text, agent_id, source, chat_id, user_id))
             return True
 
+        workspace = (get_agent_config(self.config, agent_id) or {}).get("workspace", f"~/.sea_turtle/agents/{agent_id}")
+        if self._should_start_background_job(text, attachments):
+            active_job = get_active_job(workspace)
+            if active_job:
+                asyncio.create_task(self._send_reply({
+                    "type": "reply",
+                    "agent_id": agent_id,
+                    "source": source,
+                    "chat_id": chat_id,
+                    "user_id": user_id,
+                    "content": (
+                        "🧩 当前已有后台任务在执行。\n"
+                        f"{self._format_job_status(active_job)}\n\n"
+                        "你可以等待它完成，或者使用 /job_cancel 先中断当前任务。"
+                    ),
+                }))
+                return True
+            job = create_job(
+                workspace,
+                source=source,
+                chat_id=chat_id,
+                user_id=user_id,
+                title=self._derive_job_title(text),
+                user_request=text,
+            )
+            asyncio.create_task(self._send_reply({
+                "type": "reply",
+                "agent_id": agent_id,
+                "source": source,
+                "chat_id": chat_id,
+                "user_id": user_id,
+                "content": (
+                    "收到，已按后台任务接单处理。\n"
+                    f"- Job: {job.get('id')}\n"
+                    f"- Title: {job.get('title')}\n"
+                    "- 我会分步推进，期间你可以用 /job 查看进度，或用 /job_cancel 中断当前任务。"
+                ),
+            }))
+            return True
+
         # Regular message — forward to agent
         return self.agent_manager.send_message(agent_id, {
             "type": "message",
@@ -573,6 +726,9 @@ class Daemon:
                         if not future.done():
                             future.set_result(msg)
                         continue
+                    if msg.get("type") == "job_result":
+                        await self._handle_job_result(msg)
+                        continue
                     if msg.get("type") == "heartbeat_result":
                         await self._handle_heartbeat_result(msg)
                         continue
@@ -604,6 +760,69 @@ class Daemon:
             started_at=str(msg.get("started_at") or "") or None,
         )
         await self._send_reply(msg)
+
+    async def _handle_job_result(self, msg: dict) -> None:
+        """Persist one background job step result and notify the original chat on completion."""
+        agent_id = msg.get("agent_id", "default")
+        workspace = (get_agent_config(self.config, agent_id) or {}).get("workspace", f"~/.sea_turtle/agents/{agent_id}")
+        job_id = str(msg.get("job_id") or "").strip()
+        if not job_id:
+            logger.warning("Dropped job_result without job_id")
+            return
+
+        outcome = str(msg.get("outcome") or "runtime_error")
+        started_at = str(msg.get("started_at") or "") or None
+        if outcome == "success":
+            report = msg.get("report") or {}
+            job = apply_job_step_result(
+                workspace,
+                job_id,
+                summary=str(msg.get("summary") or "").strip(),
+                output=str(msg.get("output") or "").strip(),
+                started_at=started_at,
+                phase_after=str(report.get("current_phase") or "").strip(),
+                progress_text=str(report.get("progress_text") or "").strip(),
+                working_notes=report.get("working_notes") if isinstance(report.get("working_notes"), list) else [],
+                artifacts_added=report.get("artifacts_added") if isinstance(report.get("artifacts_added"), list) else [],
+                status=str(report.get("status") or "waiting").strip().lower(),
+                cooldown_seconds=report.get("cooldown_seconds"),
+                result_summary=str(report.get("result_summary") or "").strip(),
+                result_file=str(report.get("result_file") or "").strip(),
+            )
+        else:
+            error_type = "timeout" if outcome == "timeout" else (
+                "parse_error" if outcome == "parse_error" else "runtime_error"
+            )
+            if "429" in str(msg.get("error") or "") or "rate" in str(msg.get("error") or "").lower():
+                error_type = "provider_error"
+            job = record_job_failure(
+                workspace,
+                job_id,
+                error_type=error_type,
+                error_text=str(msg.get("error") or msg.get("summary") or "Job step failed."),
+                started_at=started_at,
+            )
+        if not job:
+            return
+        if job.get("status") in {"completed", "failed", "cancelled"}:
+            content = self._format_job_status(job)
+            if job.get("status") == "completed":
+                content = f"✅ 后台任务已完成。\n{content}"
+                result_file = str(job.get("result_file") or "").strip()
+                if result_file:
+                    content = f"{content}\nATTACH: {result_file}"
+            elif job.get("status") == "cancelled":
+                content = f"⏹️ 后台任务已取消。\n{content}"
+            else:
+                content = f"❌ 后台任务已停止。\n{content}"
+            await self._send_reply({
+                "type": "reply",
+                "agent_id": agent_id,
+                "source": job.get("source") or "telegram",
+                "chat_id": job.get("chat_id"),
+                "user_id": job.get("user_id"),
+                "content": content,
+            })
 
     async def _handle_heartbeat_result(self, msg: dict) -> None:
         """Persist one heartbeat run result and notify owners."""
@@ -751,6 +970,30 @@ class Daemon:
     async def _on_tasks_found(self, agent_id: str) -> None:
         """Scheduler tick: dispatch due schedules and heartbeat if needed."""
         workspace = (get_agent_config(self.config, agent_id) or {}).get("workspace", f"~/.sea_turtle/agents/{agent_id}")
+        active_job = get_active_job(workspace)
+        if active_job:
+            active_job = expire_job_if_needed(workspace, str(active_job.get("id") or "")) or active_job
+        if active_job and active_job.get("status") in ACTIVE_JOB_STATUSES:
+            if is_job_due(active_job):
+                started_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+                started_job = mark_job_started(workspace, str(active_job.get("id") or ""), started_at=started_at)
+                if started_job:
+                    sent = self.agent_manager.send_message(agent_id, {
+                        "type": "job_run",
+                        "source": "job",
+                        "job": started_job,
+                        "started_at": started_at,
+                    })
+                    if not sent:
+                        record_job_failure(
+                            workspace,
+                            str(active_job.get("id") or ""),
+                            error_type="runtime_error",
+                            error_text="Agent is not running; job step could not be dispatched.",
+                            started_at=started_at,
+                        )
+            return
+
         schedules = list_schedules(workspace, include_disabled=False)
         incompatible = [item for item in schedules if item.get("execution_type") != "script"]
         for schedule in incompatible:

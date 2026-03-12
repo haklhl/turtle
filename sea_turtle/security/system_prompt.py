@@ -87,6 +87,9 @@ TOOL_GUIDANCE_SECTION = """\
 - Schedule files are for recurring script jobs only. Their commands must start with a file path inside the agent workspace.
 - Use `create_schedule` and `update_schedule` instead of writing `schedule.json` by hand. Pick either `interval_seconds` or `daily_time`, not both.
 - Script schedules must use `interval_seconds >= 60`, and the first command token must resolve to a file inside the current agent workspace.
+- `job`: Read the current async background-job state from `jobs.json` and inspect recent job-step logs.
+- Jobs are one-off heavy tasks requested by the user. They are not recurring schedules and not heartbeat.
+- Use `read_jobs` and `read_job_runs` when the user asks about background task progress or when you need to inspect what an async job has already completed.
 - `heartbeat`: Manage your singleton self-wakeup loop in `heartbeat.json`.
 - `heartbeat` is for waking yourself up later to do higher-level review, monitoring, and judgment-heavy follow-up work. It is not the mechanism for repeated script execution.
 - If the work is "run this same script repeatedly", use `schedule`. If the work is "wake me later so I can think, inspect, decide, and possibly act", use `heartbeat`.
