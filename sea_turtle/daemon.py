@@ -186,6 +186,9 @@ class Daemon:
             f"- Progress: {job.get('progress_text', '') or '暂无进度'}",
             f"- Steps: {job.get('step_count', 0)}/{job.get('max_steps', 0)}",
             f"- Cooldown: {job.get('cooldown_seconds', 0)}s",
+            f"- Consecutive Failures: {job.get('consecutive_failures', 0)}",
+            f"- Consecutive Timeouts: {job.get('consecutive_timeouts', 0)}",
+            f"- Retries: {job.get('retry_count', 0)}",
         ]
         if next_run_at:
             lines.append(f"- Next Run: {next_run_at}")
