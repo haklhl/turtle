@@ -23,10 +23,10 @@ ACTIVE_JOB_STATUSES = {"queued", "running", "waiting", "cancel_requested"}
 FINAL_JOB_STATUSES = {"completed", "failed", "cancelled"}
 JOB_ERROR_TYPES = {"timeout", "provider_error", "tool_error", "parse_error", "runtime_error", ""}
 
-DEFAULT_JOB_COOLDOWN_SECONDS = 300
+DEFAULT_JOB_COOLDOWN_SECONDS = 30
 MAX_CONSECUTIVE_FAILURES = 6
 MAX_CONSECUTIVE_TIMEOUTS = 6
-MAX_JOB_STEPS = 12
+MAX_JOB_STEPS = 24
 MAX_JOB_RUNTIME_MINUTES = 360
 
 
@@ -90,7 +90,7 @@ def _normalize_job(job: dict[str, Any], index: int) -> dict[str, Any]:
     created_at = str(job.get("created_at") or utc_now_iso())
     cooldown_seconds = job.get("cooldown_seconds", DEFAULT_JOB_COOLDOWN_SECONDS)
     try:
-        cooldown_seconds = max(60, int(cooldown_seconds))
+        cooldown_seconds = max(30, int(cooldown_seconds))
     except (TypeError, ValueError):
         cooldown_seconds = DEFAULT_JOB_COOLDOWN_SECONDS
 
@@ -398,7 +398,7 @@ def apply_job_step_result(
         if job.get("status") == "cancel_requested":
             new_status = "cancelled"
 
-        cooldown = max(60, int(cooldown_seconds or job.get("cooldown_seconds") or DEFAULT_JOB_COOLDOWN_SECONDS))
+        cooldown = max(30, int(cooldown_seconds or job.get("cooldown_seconds") or DEFAULT_JOB_COOLDOWN_SECONDS))
         job["step_count"] = int(job.get("step_count") or 0) + 1
         job["last_step_at"] = finished_at
         job["updated_at"] = finished_at
@@ -477,9 +477,9 @@ def record_job_failure(
             DEFAULT_JOB_COOLDOWN_SECONDS,
         )
         if normalized_type == "timeout":
-            cooldown = min(cooldown * 2, 900)
+            cooldown = min(cooldown * 2, 60)
         elif normalized_type == "provider_error":
-            cooldown = min(max(cooldown, 600), 900)
+            cooldown = min(max(cooldown, 60), 120)
         job["cooldown_seconds"] = cooldown
         job["progress_text"] = (
             "上一步执行超时，已自动缩小范围等待重试。"

@@ -281,7 +281,7 @@ class JobStoreTests(unittest.TestCase):
                 working_notes=["奖励数据已保存"],
                 artifacts_added=["/tmp/rewards.md"],
                 status="waiting",
-                cooldown_seconds=300,
+                cooldown_seconds=30,
             )
 
             self.assertEqual(updated["status"], "waiting")
@@ -350,7 +350,7 @@ class JobStoreTests(unittest.TestCase):
             "SUMMARY:\n已完成一步。\n\n"
             "JOB_STEP:\n```json\n"
             "{\"status\":\"waiting\",\"progress_text\":\"已完成一步\",\"current_phase\":\"next\","
-            "\"working_notes\":[\"a\"],\"artifacts_added\":[],\"result_summary\":\"\",\"result_file\":\"\",\"cooldown_seconds\":300}\n```"
+            "\"working_notes\":[\"a\"],\"artifacts_added\":[],\"result_summary\":\"\",\"result_file\":\"\",\"cooldown_seconds\":30}\n```"
         )
         summary, report = extract_job_step_report(reply)
         self.assertIn("已完成一步", summary)

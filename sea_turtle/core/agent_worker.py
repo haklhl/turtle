@@ -573,7 +573,7 @@ class AgentWorker:
             "\"artifacts_added\":[\"/absolute/path\"],"
             "\"result_summary\":\"...\","
             "\"result_file\":\"/absolute/path/or/empty\","
-            "\"cooldown_seconds\":300}\n"
+            "\"cooldown_seconds\":30}\n"
             "```\n\n"
             "Rules:\n"
             f"- This is step {step_index}.\n"
