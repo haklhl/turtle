@@ -150,7 +150,32 @@ def _get_pid(config_path: str | None = None) -> int | None:
     return None
 
 
+def _get_pid_file(config_path: str | None = None) -> Path:
+    try:
+        config = _load_cfg(argparse.Namespace(config=config_path))
+        return Path(config.get("global", {}).get("pid_file", "~/.sea_turtle/daemon.pid")).expanduser()
+    except Exception:
+        return Path("~/.sea_turtle/daemon.pid").expanduser()
+
+
+def _clear_stale_pid_file(config_path: str | None = None) -> int | None:
+    pid = _get_pid(config_path)
+    if pid is None:
+        return None
+    try:
+        os.kill(pid, 0)
+        return None
+    except OSError:
+        pid_file = _get_pid_file(config_path)
+        try:
+            pid_file.unlink(missing_ok=True)
+        except OSError:
+            pass
+        return pid
+
+
 def _is_daemon_running(config_path: str | None = None) -> bool:
+    _clear_stale_pid_file(config_path)
     pid = _get_pid(config_path)
     if pid is None:
         return False
@@ -164,6 +189,9 @@ def _is_daemon_running(config_path: str | None = None) -> bool:
 def cmd_start(args):
     """Start the daemon process."""
     config_path = getattr(args, "config", None)
+    stale_pid = _clear_stale_pid_file(config_path)
+    if stale_pid is not None:
+        print(f"🧹 Removed stale daemon pidfile (PID: {stale_pid}).")
     if _is_daemon_running(config_path):
         print("🐢 Daemon is already running (PID: {}).".format(_get_pid(config_path)))
         return
@@ -176,6 +204,11 @@ def cmd_start(args):
 def cmd_stop(args):
     """Stop the daemon process."""
     config_path = getattr(args, "config", None)
+    stale_pid = _clear_stale_pid_file(config_path)
+    if stale_pid is not None:
+        print(f"🧹 Removed stale daemon pidfile (PID: {stale_pid}).")
+        print("🐢 Daemon is not running.")
+        return
     pid = _get_pid(config_path)
     if pid is None or not _is_daemon_running(config_path):
         print("🐢 Daemon is not running.")
@@ -192,10 +225,13 @@ def cmd_stop(args):
 def cmd_status(args):
     """Show daemon and agent status."""
     config_path = getattr(args, "config", None)
+    stale_pid = _clear_stale_pid_file(config_path)
     pid = _get_pid(config_path)
     running = _is_daemon_running(config_path)
 
     print(f"🐢 Sea Turtle v{__version__}")
+    if stale_pid is not None:
+        print(f"  Note: removed stale pidfile for PID {stale_pid}")
     print(f"  Daemon: {'🟢 Running' if running else '🔴 Stopped'} (PID: {pid or 'N/A'})")
 
     config = _load_cfg(args)
