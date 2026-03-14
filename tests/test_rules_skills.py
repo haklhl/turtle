@@ -12,6 +12,8 @@ class RulesSkillsTests(unittest.TestCase):
         self.assertIn("Components V2", discord_skills)
 
         telegram_skills = load_global_skills("telegram")
+        self.assertIn("Telegram Skills", telegram_skills)
+        self.assertIn("STICKER_EMOTION", telegram_skills)
         self.assertNotIn("Discord Skills", telegram_skills)
 
     def test_load_skills_merges_global_agent_and_channel_files(self):
