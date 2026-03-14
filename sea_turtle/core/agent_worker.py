@@ -10,8 +10,13 @@ from multiprocessing import Queue
 from pathlib import Path
 from typing import Any
 
-from sea_turtle.config.loader import get_agent_config
+from sea_turtle.config.loader import get_agent_config, resolve_secret
 from sea_turtle.core.context import ContextManager
+from sea_turtle.core.discord_api import (
+    fetch_channel_info as fetch_discord_channel_info,
+    read_messages as read_discord_messages,
+    search_messages as search_discord_messages,
+)
 from sea_turtle.core.jobs import (
     extract_job_step_report,
     list_job_runs,
@@ -254,6 +259,74 @@ HEARTBEAT_UPDATE_TOOL = ToolDefinition(
     },
 )
 
+DISCORD_CHANNEL_INFO_TOOL = ToolDefinition(
+    name="discord_channel_info",
+    description="Read Discord metadata for the current channel/thread or a specified Discord channel id.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "channel_id": {
+                "type": "string",
+                "description": "Optional Discord channel id. Defaults to the current Discord channel.",
+            },
+        },
+    },
+)
+
+DISCORD_READ_MESSAGES_TOOL = ToolDefinition(
+    name="discord_read_messages",
+    description="Read recent Discord messages from the current channel or a specified Discord channel id.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "channel_id": {
+                "type": "string",
+                "description": "Optional Discord channel id. Defaults to the current Discord channel.",
+            },
+            "limit": {
+                "type": "integer",
+                "description": "Maximum number of messages to read. Default 20, max 100.",
+            },
+            "before": {"type": "string", "description": "Optional message id to paginate before."},
+            "after": {"type": "string", "description": "Optional message id to paginate after."},
+            "around": {"type": "string", "description": "Optional message id to center results around."},
+        },
+    },
+)
+
+DISCORD_SEARCH_MESSAGES_TOOL = ToolDefinition(
+    name="discord_search_messages",
+    description="Search Discord messages inside the current guild or a specified guild id by keyword.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "query": {
+                "type": "string",
+                "description": "Keyword query to search for in Discord messages.",
+            },
+            "guild_id": {
+                "type": "string",
+                "description": "Optional Discord guild id. Defaults to the current guild.",
+            },
+            "channel_ids": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Optional list of Discord channel ids to scope the search.",
+            },
+            "author_ids": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Optional list of Discord author ids to scope the search.",
+            },
+            "limit": {
+                "type": "integer",
+                "description": "Maximum number of search hits to return. Default 10, max 25.",
+            },
+        },
+        "required": ["query"],
+    },
+)
+
 ALL_TOOLS = {
     "shell": [SHELL_TOOL],
     "memory": [MEMORY_READ_TOOL, MEMORY_WRITE_TOOL],
@@ -282,6 +355,11 @@ ALL_TOOLS = {
     "heartbeat": [HEARTBEAT_READ_TOOL, HEARTBEAT_RUN_READ_TOOL, HEARTBEAT_UPDATE_TOOL],
     "job": [JOB_READ_TOOL, JOB_RUN_READ_TOOL],
 }
+DISCORD_CHANNEL_TOOLS = [
+    DISCORD_CHANNEL_INFO_TOOL,
+    DISCORD_READ_MESSAGES_TOOL,
+    DISCORD_SEARCH_MESSAGES_TOOL,
+]
 IMAGE_ATTACHMENT_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
 
 
@@ -392,6 +470,7 @@ class AgentWorker:
         self._error_count = 0
         self._total_processing_time_ms = 0
         self._last_processing_time_ms = 0
+        self._active_request_context: dict[str, Any] = {}
 
     def _conversation_id(
         self,
@@ -445,14 +524,31 @@ class AgentWorker:
         context.reset()
         return conversation_id
 
-    def _get_tools(self) -> list[ToolDefinition]:
+    def _discord_tools_available(self) -> bool:
+        return bool(
+            resolve_secret(self.agent_config.get("discord", {}), "bot_token", "bot_token_env")
+            or resolve_secret(self.config.get("discord", {}), "bot_token", "bot_token_env")
+        )
+
+    def _get_tools(self, source: str = "unknown") -> list[ToolDefinition]:
         """Get tool definitions based on agent config."""
         enabled_tools = self.agent_config.get("tools", ["shell", "memory", "schedule"])
         tools = []
         for tool_name in enabled_tools:
             if tool_name in ALL_TOOLS:
                 tools.extend(ALL_TOOLS[tool_name])
+        if source == "discord" and self._discord_tools_available():
+            tools.extend(DISCORD_CHANNEL_TOOLS)
         return tools
+
+    def _current_discord_context(self) -> tuple[str | None, str | None]:
+        if self._active_request_context.get("source") != "discord":
+            return (None, None)
+        guild_id = self._active_request_context.get("guild_id")
+        channel_id = self._active_request_context.get("chat_id")
+        guild_text = str(guild_id).strip() if guild_id not in (None, "", 0) else None
+        channel_text = str(channel_id).strip() if channel_id not in (None, "", 0) else None
+        return guild_text, channel_text
 
     @staticmethod
     def _build_schedule_trigger(arguments: dict[str, Any]) -> tuple[dict[str, Any], str | None]:
@@ -771,6 +867,65 @@ class AgentWorker:
             )
             return f"Heartbeat updated: {json.dumps(heartbeat, ensure_ascii=False)}"
 
+        elif name == "discord_channel_info":
+            _, default_channel_id = self._current_discord_context()
+            channel_id = str(arguments.get("channel_id") or default_channel_id or "").strip()
+            if not channel_id:
+                return "Discord channel info unavailable: no current Discord channel context."
+            payload = fetch_discord_channel_info(self.config, self.agent_id, channel_id)
+            return json.dumps(payload, ensure_ascii=False, indent=2)
+
+        elif name == "discord_read_messages":
+            _, default_channel_id = self._current_discord_context()
+            channel_id = str(arguments.get("channel_id") or default_channel_id or "").strip()
+            if not channel_id:
+                return "Discord read unavailable: no current Discord channel context."
+            limit = arguments.get("limit")
+            try:
+                limit_int = max(1, min(int(limit or 20), 100))
+            except (TypeError, ValueError):
+                limit_int = 20
+            payload = read_discord_messages(
+                self.config,
+                self.agent_id,
+                channel_id,
+                limit=limit_int,
+                before=str(arguments.get("before") or "").strip() or None,
+                after=str(arguments.get("after") or "").strip() or None,
+                around=str(arguments.get("around") or "").strip() or None,
+            )
+            return json.dumps(payload, ensure_ascii=False, indent=2)
+
+        elif name == "discord_search_messages":
+            default_guild_id, _ = self._current_discord_context()
+            guild_id = str(arguments.get("guild_id") or default_guild_id or "").strip()
+            if not guild_id:
+                return "Discord search unavailable: no current Discord guild context."
+            query = str(arguments.get("query") or "").strip()
+            if not query:
+                return "Discord search skipped: query is required."
+            channel_ids = arguments.get("channel_ids")
+            author_ids = arguments.get("author_ids")
+            if not isinstance(channel_ids, list):
+                channel_ids = None
+            if not isinstance(author_ids, list):
+                author_ids = None
+            limit = arguments.get("limit")
+            try:
+                limit_int = max(1, min(int(limit or 10), 25))
+            except (TypeError, ValueError):
+                limit_int = 10
+            payload = search_discord_messages(
+                self.config,
+                self.agent_id,
+                guild_id=guild_id,
+                content=query,
+                channel_ids=[str(item).strip() for item in (channel_ids or []) if str(item).strip()] or None,
+                author_ids=[str(item).strip() for item in (author_ids or []) if str(item).strip()] or None,
+                limit=limit_int,
+            )
+            return json.dumps(payload, ensure_ascii=False, indent=2)
+
         return f"Unknown tool: {name}"
 
     async def _process_message(
@@ -823,49 +978,58 @@ class AgentWorker:
         if context.needs_compression():
             await context.compress(self.llm)
 
-        tools = self._get_tools()
+        self._active_request_context = {
+            "source": source,
+            "chat_id": chat_id,
+            "user_id": user_id,
+            "guild_id": guild_id,
+        }
+        tools = self._get_tools(source)
         max_tool_rounds = 10
 
-        for _ in range(max_tool_rounds):
-            messages = context.get_messages()
-            response = await self.llm.chat(
-                messages=messages,
-                model=self.model,
-                temperature=self.config.get("llm", {}).get("temperature", 0.7),
-                max_output_tokens=self.config.get("llm", {}).get("max_output_tokens", 8192),
-                tools=tools if tools else None,
-                metadata={
-                    "conversation_id": conversation_id,
-                    "source": source,
-                    "chat_id": chat_id,
-                    "user_id": user_id,
-                    "guild_id": guild_id,
-                    "image_paths": image_attachments,
-                },
-            )
-
-            # Record token usage
-            self.token_counter.record(self.model, response.input_tokens, response.output_tokens)
-
-            # If no tool calls, return the text response
-            if not response.tool_calls:
-                if response.content:
-                    context.add_message("assistant", response.content)
-                return response.content
-
-            # Handle tool calls
-            context.add_message("assistant", response.content or "", tool_calls=response.tool_calls)
-
-            for tc in response.tool_calls:
-                result = await self._handle_tool_call(tc["name"], tc.get("arguments", {}))
-                context.add_message(
-                    "tool",
-                    result,
-                    name=tc["name"],
-                    tool_call_id=tc.get("id", ""),
+        try:
+            for _ in range(max_tool_rounds):
+                messages = context.get_messages()
+                response = await self.llm.chat(
+                    messages=messages,
+                    model=self.model,
+                    temperature=self.config.get("llm", {}).get("temperature", 0.7),
+                    max_output_tokens=self.config.get("llm", {}).get("max_output_tokens", 8192),
+                    tools=tools if tools else None,
+                    metadata={
+                        "conversation_id": conversation_id,
+                        "source": source,
+                        "chat_id": chat_id,
+                        "user_id": user_id,
+                        "guild_id": guild_id,
+                        "image_paths": image_attachments,
+                    },
                 )
 
-        return "Maximum tool call rounds reached. Please try again."
+                # Record token usage
+                self.token_counter.record(self.model, response.input_tokens, response.output_tokens)
+
+                # If no tool calls, return the text response
+                if not response.tool_calls:
+                    if response.content:
+                        context.add_message("assistant", response.content)
+                    return response.content
+
+                # Handle tool calls
+                context.add_message("assistant", response.content or "", tool_calls=response.tool_calls)
+
+                for tc in response.tool_calls:
+                    result = await self._handle_tool_call(tc["name"], tc.get("arguments", {}))
+                    context.add_message(
+                        "tool",
+                        result,
+                        name=tc["name"],
+                        tool_call_id=tc.get("id", ""),
+                    )
+
+            return "Maximum tool call rounds reached. Please try again."
+        finally:
+            self._active_request_context = {}
 
     async def _process_incoming_message(self, msg: dict) -> None:
         """Process one message-like inbox item and emit a reply."""

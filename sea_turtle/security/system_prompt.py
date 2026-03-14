@@ -98,6 +98,15 @@ TOOL_GUIDANCE_SECTION = """\
 - Ask for confirmation before any destructive or privilege-changing command.
 """
 
+DISCORD_TOOL_GUIDANCE_SECTION = """\
+## Discord Tool Guidance
+- Discord read/search tools are available only in Discord conversations.
+- Use `discord_channel_info` to inspect the current channel or thread when channel structure matters.
+- Use `discord_read_messages` to read recent messages from the current Discord channel or a specified Discord channel id.
+- Use `discord_search_messages` to search Discord history inside the current guild when you need older mentions, decisions, or references.
+- Prefer the current Discord channel and guild by default. Only search other ids when the user clearly asks for them.
+"""
+
 STICKER_GUIDANCE_SECTION = """\
 ## Telegram Sticker Guidance
 - Emotion stickers are enabled for this agent.
@@ -179,6 +188,8 @@ def build_system_prompt(
 
     # 3. Skills (only if non-empty)
     parts.append(TOOL_GUIDANCE_SECTION)
+    if channel_name == "discord":
+        parts.append(DISCORD_TOOL_GUIDANCE_SECTION)
     tg_cfg = agent_config.get("telegram", {})
     if channel_name == "telegram" and tg_cfg.get("stickers_enabled", False):
         parts.append(STICKER_GUIDANCE_SECTION)
