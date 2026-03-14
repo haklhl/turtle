@@ -312,24 +312,38 @@ class DiscordChannel(BaseChannel):
             )
             await interaction.response.send_message(reply, ephemeral=True)
 
-    async def _send_discord_message(self, channel, text: str, embed: dict | None = None) -> None:
-        """Send a message to a Discord channel, optionally with one embed."""
+    async def _send_discord_message(
+        self,
+        channel,
+        text: str,
+        embed: dict | None = None,
+        embeds: list[dict] | None = None,
+    ) -> None:
+        """Send a message to a Discord channel, optionally with embeds."""
         try:
-            embed_obj = discord.Embed.from_dict(embed) if embed else None
+            embed_objs = [discord.Embed.from_dict(item) for item in embeds or [] if isinstance(item, dict)]
+            if not embed_objs and embed:
+                embed_objs = [discord.Embed.from_dict(embed)]
             if len(text) <= 2000:
                 kwargs = {}
-                if embed_obj:
-                    kwargs["embed"] = embed_obj
+                if embed_objs:
+                    if len(embed_objs) == 1:
+                        kwargs["embed"] = embed_objs[0]
+                    else:
+                        kwargs["embeds"] = embed_objs[:10]
                 if text:
                     await channel.send(text, **kwargs)
-                elif embed_obj:
-                    await channel.send(embed=embed_obj)
+                elif embed_objs:
+                    await channel.send(**kwargs)
             else:
                 for i in range(0, len(text), 2000):
                     chunk = text[i:i + 2000]
                     kwargs = {}
-                    if embed_obj and i == 0:
-                        kwargs["embed"] = embed_obj
+                    if embed_objs and i == 0:
+                        if len(embed_objs) == 1:
+                            kwargs["embed"] = embed_objs[0]
+                        else:
+                            kwargs["embeds"] = embed_objs[:10]
                     await channel.send(chunk, **kwargs)
                     await asyncio.sleep(0.3)
         except Exception as e:
@@ -341,6 +355,7 @@ class DiscordChannel(BaseChannel):
         text: str,
         agent_id: str | None = None,
         embed: dict | None = None,
+        embeds: list[dict] | None = None,
     ) -> None:
         """Send a message to a Discord channel by ID."""
         if not agent_id or agent_id not in self.bots:
@@ -351,7 +366,7 @@ class DiscordChannel(BaseChannel):
         try:
             channel = bot.get_channel(int(chat_id))
             if channel:
-                await self._send_discord_message(channel, text, embed=embed)
+                await self._send_discord_message(channel, text, embed=embed, embeds=embeds)
         except Exception as e:
             logger.error(f"Failed to send Discord message to {chat_id}: {e}")
 

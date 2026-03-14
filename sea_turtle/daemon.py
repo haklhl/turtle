@@ -869,6 +869,7 @@ class Daemon:
                 payload["text"],
                 agent_id,
                 payload.get("discord_embed"),
+                payload.get("discord_embeds"),
             )
         elif source == "heartbeat":
             logger.debug(f"Heartbeat result for '{agent_id}': {payload['text'][:200]}")
@@ -884,6 +885,7 @@ class Daemon:
         sticker_emotion = ""
         text_lines = []
         discord_embed = None
+        discord_embeds = None
         lines = (content or "").splitlines()
         i = 0
         while i < len(lines):
@@ -902,7 +904,10 @@ class Daemon:
                     except json.JSONDecodeError:
                         text_lines.append(line)
                     else:
-                        if isinstance(parsed, dict):
+                        if isinstance(parsed, dict) and isinstance(parsed.get("embeds"), list):
+                            if discord_embeds is None:
+                                discord_embeds = [item for item in parsed.get("embeds", []) if isinstance(item, dict)]
+                        elif isinstance(parsed, dict):
                             discord_embed = parsed
             elif line.startswith("DISCORD_EMBED_JSON:"):
                 block_lines: list[str] = []
@@ -925,7 +930,10 @@ class Daemon:
                         text_lines.append("DISCORD_EMBED_JSON:")
                         text_lines.extend(block_lines)
                     else:
-                        if isinstance(parsed, dict):
+                        if isinstance(parsed, dict) and isinstance(parsed.get("embeds"), list):
+                            if discord_embeds is None:
+                                discord_embeds = [item for item in parsed.get("embeds", []) if isinstance(item, dict)]
+                        elif isinstance(parsed, dict):
                             discord_embed = parsed
             else:
                 text_lines.append(line)
@@ -935,6 +943,7 @@ class Daemon:
             "attachments": attachments,
             "sticker_emotion": sticker_emotion,
             "discord_embed": discord_embed,
+            "discord_embeds": discord_embeds,
         }
 
     async def _send_telegram_reply(
@@ -974,10 +983,17 @@ class Daemon:
             agent_id,
         )
 
-    async def _send_discord_reply(self, chat_id, content, agent_id: str, embed: dict | None = None):
+    async def _send_discord_reply(
+        self,
+        chat_id,
+        content,
+        agent_id: str,
+        embed: dict | None = None,
+        embeds: list[dict] | None = None,
+    ):
         """Send reply via Discord."""
         if self._discord_channel:
-            await self._discord_channel.send_message(chat_id, content, agent_id, embed=embed)
+            await self._discord_channel.send_message(chat_id, content, agent_id, embed=embed, embeds=embeds)
         else:
             logger.warning(f"Discord channel not available, cannot send reply to {chat_id}")
 

@@ -18,6 +18,14 @@ class DiscordPayloadTests(unittest.TestCase):
         self.assertEqual(payload["text"], "summary")
         self.assertEqual(payload["discord_embed"], {"title": "Status", "color": 65280})
 
+    def test_parse_multiple_discord_embeds(self):
+        payload = Daemon._parse_reply_payload(
+            'hello\nDISCORD_EMBED: {"embeds":[{"title":"Embed 1"},{"title":"Embed 2"}]}'
+        )
+        self.assertEqual(payload["text"], "hello")
+        self.assertIsNone(payload["discord_embed"])
+        self.assertEqual(payload["discord_embeds"], [{"title": "Embed 1"}, {"title": "Embed 2"}])
+
 
 if __name__ == "__main__":
     unittest.main()
