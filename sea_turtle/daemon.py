@@ -870,6 +870,7 @@ class Daemon:
                 agent_id,
                 payload.get("discord_embed"),
                 payload.get("discord_embeds"),
+                payload["attachments"],
             )
         elif source == "heartbeat":
             logger.debug(f"Heartbeat result for '{agent_id}': {payload['text'][:200]}")
@@ -990,10 +991,18 @@ class Daemon:
         agent_id: str,
         embed: dict | None = None,
         embeds: list[dict] | None = None,
+        attachments: list[str] | None = None,
     ):
         """Send reply via Discord."""
         if self._discord_channel:
-            await self._discord_channel.send_message(chat_id, content, agent_id, embed=embed, embeds=embeds)
+            await self._discord_channel.send_message(
+                chat_id,
+                content,
+                agent_id,
+                embed=embed,
+                embeds=embeds,
+                attachments=attachments,
+            )
         else:
             logger.warning(f"Discord channel not available, cannot send reply to {chat_id}")
 

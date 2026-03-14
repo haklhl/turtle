@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+from pathlib import Path
 from typing import Any, TYPE_CHECKING
 
 import discord
@@ -318,12 +319,15 @@ class DiscordChannel(BaseChannel):
         text: str,
         embed: dict | None = None,
         embeds: list[dict] | None = None,
+        attachments: list[str] | None = None,
     ) -> None:
-        """Send a message to a Discord channel, optionally with embeds."""
+        """Send a message to a Discord channel, optionally with embeds/files."""
         try:
             embed_objs = [discord.Embed.from_dict(item) for item in embeds or [] if isinstance(item, dict)]
             if not embed_objs and embed:
                 embed_objs = [discord.Embed.from_dict(embed)]
+            file_paths = [Path(item).expanduser() for item in attachments or [] if str(item).strip()]
+            file_paths = [path for path in file_paths if path.exists() and path.is_file()]
             if len(text) <= 2000:
                 kwargs = {}
                 if embed_objs:
@@ -331,9 +335,11 @@ class DiscordChannel(BaseChannel):
                         kwargs["embed"] = embed_objs[0]
                     else:
                         kwargs["embeds"] = embed_objs[:10]
+                if file_paths:
+                    kwargs["files"] = [discord.File(str(path), filename=path.name) for path in file_paths[:10]]
                 if text:
                     await channel.send(text, **kwargs)
-                elif embed_objs:
+                elif embed_objs or file_paths:
                     await channel.send(**kwargs)
             else:
                 for i in range(0, len(text), 2000):
@@ -344,6 +350,8 @@ class DiscordChannel(BaseChannel):
                             kwargs["embed"] = embed_objs[0]
                         else:
                             kwargs["embeds"] = embed_objs[:10]
+                    if file_paths and i == 0:
+                        kwargs["files"] = [discord.File(str(path), filename=path.name) for path in file_paths[:10]]
                     await channel.send(chunk, **kwargs)
                     await asyncio.sleep(0.3)
         except Exception as e:
@@ -356,6 +364,7 @@ class DiscordChannel(BaseChannel):
         agent_id: str | None = None,
         embed: dict | None = None,
         embeds: list[dict] | None = None,
+        attachments: list[str] | None = None,
     ) -> None:
         """Send a message to a Discord channel by ID."""
         if not agent_id or agent_id not in self.bots:
@@ -366,7 +375,13 @@ class DiscordChannel(BaseChannel):
         try:
             channel = bot.get_channel(int(chat_id))
             if channel:
-                await self._send_discord_message(channel, text, embed=embed, embeds=embeds)
+                await self._send_discord_message(
+                    channel,
+                    text,
+                    embed=embed,
+                    embeds=embeds,
+                    attachments=attachments,
+                )
         except Exception as e:
             logger.error(f"Failed to send Discord message to {chat_id}: {e}")
 

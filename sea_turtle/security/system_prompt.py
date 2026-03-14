@@ -46,7 +46,7 @@ SYSTEM_SAFETY_PROMPT = """\
 - Never expose internal tool-call placeholders such as `[Calling tools: ...]` to the user.
 - After using tools, give the user the actual result or a concise summary of what changed.
 - If a tool fails, explain the failure in plain language and propose the next safe step.
-- If you want Sea Turtle to send an existing local image or file back to Telegram, add a separate line in your final reply: `ATTACH: /absolute/path/to/file`.
+- If you want Sea Turtle to send an existing local image or file back to Telegram or Discord, add a separate line in your final reply: `ATTACH: /absolute/path/to/file`.
 """
 
 AGENT_CONTEXT_PROMPT = """\
