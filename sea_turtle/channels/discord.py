@@ -312,20 +312,36 @@ class DiscordChannel(BaseChannel):
             )
             await interaction.response.send_message(reply, ephemeral=True)
 
-    async def _send_discord_message(self, channel, text: str) -> None:
-        """Send a message to a Discord channel, splitting if needed."""
+    async def _send_discord_message(self, channel, text: str, embed: dict | None = None) -> None:
+        """Send a message to a Discord channel, optionally with one embed."""
         try:
+            embed_obj = discord.Embed.from_dict(embed) if embed else None
             if len(text) <= 2000:
-                await channel.send(text)
+                kwargs = {}
+                if embed_obj:
+                    kwargs["embed"] = embed_obj
+                if text:
+                    await channel.send(text, **kwargs)
+                elif embed_obj:
+                    await channel.send(embed=embed_obj)
             else:
                 for i in range(0, len(text), 2000):
                     chunk = text[i:i + 2000]
-                    await channel.send(chunk)
+                    kwargs = {}
+                    if embed_obj and i == 0:
+                        kwargs["embed"] = embed_obj
+                    await channel.send(chunk, **kwargs)
                     await asyncio.sleep(0.3)
         except Exception as e:
             logger.error(f"Failed to send Discord message: {e}")
 
-    async def send_message(self, chat_id: Any, text: str, agent_id: str | None = None) -> None:
+    async def send_message(
+        self,
+        chat_id: Any,
+        text: str,
+        agent_id: str | None = None,
+        embed: dict | None = None,
+    ) -> None:
         """Send a message to a Discord channel by ID."""
         if not agent_id or agent_id not in self.bots:
             logger.warning(f"Discord bot not available for agent '{agent_id}', cannot send reply to {chat_id}")
@@ -335,7 +351,7 @@ class DiscordChannel(BaseChannel):
         try:
             channel = bot.get_channel(int(chat_id))
             if channel:
-                await self._send_discord_message(channel, text)
+                await self._send_discord_message(channel, text, embed=embed)
         except Exception as e:
             logger.error(f"Failed to send Discord message to {chat_id}: {e}")
 

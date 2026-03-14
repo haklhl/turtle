@@ -864,7 +864,12 @@ class Daemon:
                 payload.get("sticker_emotion", ""),
             )
         elif source == "discord":
-            await self._send_discord_reply(chat_id, payload["text"], agent_id)
+            await self._send_discord_reply(
+                chat_id,
+                payload["text"],
+                agent_id,
+                payload.get("discord_embed"),
+            )
         elif source == "heartbeat":
             logger.debug(f"Heartbeat result for '{agent_id}': {payload['text'][:200]}")
         elif source == "scheduler":
@@ -878,19 +883,58 @@ class Daemon:
         attachments = []
         sticker_emotion = ""
         text_lines = []
-        for line in (content or "").splitlines():
+        discord_embed = None
+        lines = (content or "").splitlines()
+        i = 0
+        while i < len(lines):
+            line = lines[i]
             if line.startswith("ATTACH:"):
                 path = line.split(":", 1)[1].strip()
                 if path:
                     attachments.append(path)
             elif line.startswith("STICKER_EMOTION:"):
                 sticker_emotion = line.split(":", 1)[1].strip()
+            elif line.startswith("DISCORD_EMBED:"):
+                raw = line.split(":", 1)[1].strip()
+                if raw and discord_embed is None:
+                    try:
+                        parsed = json.loads(raw)
+                    except json.JSONDecodeError:
+                        text_lines.append(line)
+                    else:
+                        if isinstance(parsed, dict):
+                            discord_embed = parsed
+            elif line.startswith("DISCORD_EMBED_JSON:"):
+                block_lines: list[str] = []
+                i += 1
+                if i < len(lines) and lines[i].strip().startswith("```"):
+                    i += 1
+                    while i < len(lines) and lines[i].strip() != "```":
+                        block_lines.append(lines[i])
+                        i += 1
+                else:
+                    while i < len(lines) and lines[i].strip():
+                        block_lines.append(lines[i])
+                        i += 1
+                    i -= 1
+                if block_lines and discord_embed is None:
+                    raw = "\n".join(block_lines).strip()
+                    try:
+                        parsed = json.loads(raw)
+                    except json.JSONDecodeError:
+                        text_lines.append("DISCORD_EMBED_JSON:")
+                        text_lines.extend(block_lines)
+                    else:
+                        if isinstance(parsed, dict):
+                            discord_embed = parsed
             else:
                 text_lines.append(line)
+            i += 1
         return {
             "text": "\n".join(text_lines).strip(),
             "attachments": attachments,
             "sticker_emotion": sticker_emotion,
+            "discord_embed": discord_embed,
         }
 
     async def _send_telegram_reply(
@@ -930,10 +974,10 @@ class Daemon:
             agent_id,
         )
 
-    async def _send_discord_reply(self, chat_id, content, agent_id: str):
+    async def _send_discord_reply(self, chat_id, content, agent_id: str, embed: dict | None = None):
         """Send reply via Discord."""
         if self._discord_channel:
-            await self._discord_channel.send_message(chat_id, content, agent_id)
+            await self._discord_channel.send_message(chat_id, content, agent_id, embed=embed)
         else:
             logger.warning(f"Discord channel not available, cannot send reply to {chat_id}")
 

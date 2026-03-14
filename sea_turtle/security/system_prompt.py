@@ -107,6 +107,7 @@ DISCORD_TOOL_GUIDANCE_SECTION = """\
 - Prefer the current Discord channel and guild by default. Only search other ids when the user clearly asks for them.
 - If the user asks what was said earlier in this Discord channel, who said something, what the recent discussion was, or what the group already decided, read or search Discord history before answering.
 - Do not pretend to know older Discord channel history unless you actually checked it with the Discord history tools or the local Discord helper script.
+- To send one structured Discord embed, append `DISCORD_EMBED: {...}` on one line, or use a `DISCORD_EMBED_JSON:` block followed by JSON.
 """
 
 STICKER_GUIDANCE_SECTION = """\
