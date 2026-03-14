@@ -78,7 +78,28 @@ class DiscordPayloadTests(unittest.TestCase):
             text="summary first",
         )
         self.assertEqual(payload["components"][0], {"type": "text_display", "content": "summary first"})
-        self.assertEqual(payload["components"][1]["type"], "button")
+        self.assertEqual(payload["components"][1]["type"], "container")
+        self.assertEqual(payload["components"][1]["children"][0]["type"], "button")
+
+    def test_normalize_components_wraps_top_level_interactives(self):
+        payload = normalize_components_payload(
+            {
+                "components": [
+                    {"type": "text_display", "content": "Actions"},
+                    {"type": "button", "label": "One"},
+                    {"type": "button", "label": "Two"},
+                    {"type": "select", "options": [{"label": "A", "value": "a"}]},
+                    {"type": "separator"},
+                ]
+            }
+        )
+        self.assertEqual(payload["components"][0]["type"], "text_display")
+        self.assertEqual(payload["components"][1]["type"], "container")
+        self.assertEqual(
+            [item["type"] for item in payload["components"][1]["children"]],
+            ["button", "button", "select"],
+        )
+        self.assertEqual(payload["components"][2]["type"], "separator")
 
 class _DummyChannelManager:
     def __init__(self):

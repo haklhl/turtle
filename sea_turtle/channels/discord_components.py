@@ -387,7 +387,32 @@ def normalize_components_payload(
         raise ValueError("components payload must be an object or list")
     if text.strip():
         payload["components"] = [{"type": "text_display", "content": text.strip()}, *payload["components"]]
+    payload["components"] = _wrap_top_level_interactives(payload["components"])
     return payload
+
+
+def _wrap_top_level_interactives(components: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    wrapped: list[dict[str, Any]] = []
+    buffer: list[dict[str, Any]] = []
+
+    def flush_buffer() -> None:
+        nonlocal buffer
+        if not buffer:
+            return
+        wrapped.append({"type": "container", "children": buffer})
+        buffer = []
+
+    for item in components:
+        if not isinstance(item, dict):
+            continue
+        item_type = str(item.get("type") or "").strip().lower()
+        if item_type in {"button", "select"}:
+            buffer.append(item)
+            continue
+        flush_buffer()
+        wrapped.append(item)
+    flush_buffer()
+    return wrapped
 
 
 def build_modal(
