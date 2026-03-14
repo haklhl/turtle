@@ -10,7 +10,11 @@ from discord import app_commands
 from discord.ext import commands
 
 from sea_turtle.channels.base import BaseChannel
-from sea_turtle.channels.discord_components import build_layout_view, DiscordInteractionRuntime
+from sea_turtle.channels.discord_components import (
+    build_layout_view,
+    DiscordInteractionRuntime,
+    normalize_components_payload,
+)
 
 if TYPE_CHECKING:
     from sea_turtle.daemon import Daemon
@@ -326,16 +330,22 @@ class DiscordChannel(BaseChannel):
     ) -> None:
         """Send a message to a Discord channel, optionally with embeds/files."""
         try:
+            view = None
+            message_text = text
             embed_objs = [discord.Embed.from_dict(item) for item in embeds or [] if isinstance(item, dict)]
             if not embed_objs and embed:
                 embed_objs = [discord.Embed.from_dict(embed)]
-            view = None
             if components and agent_id:
+                normalized_components = normalize_components_payload(components, text)
                 runtime = DiscordInteractionRuntime(self, agent_id, channel.id)
-                view = build_layout_view(components, runtime)
+                view = build_layout_view(normalized_components, runtime)
+                message_text = ""
+                if embed_objs:
+                    logger.warning("Ignoring Discord embeds because Components V2 payload is present.")
+                    embed_objs = []
             file_paths = [Path(item).expanduser() for item in attachments or [] if str(item).strip()]
             file_paths = [path for path in file_paths if path.exists() and path.is_file()]
-            if len(text) <= 2000:
+            if len(message_text) <= 2000:
                 kwargs = {}
                 if embed_objs:
                     if len(embed_objs) == 1:
@@ -346,13 +356,13 @@ class DiscordChannel(BaseChannel):
                     kwargs["view"] = view
                 if file_paths:
                     kwargs["files"] = [discord.File(str(path), filename=path.name) for path in file_paths[:10]]
-                if text:
-                    await channel.send(text, **kwargs)
+                if message_text:
+                    await channel.send(message_text, **kwargs)
                 elif embed_objs or file_paths or view:
                     await channel.send(**kwargs)
             else:
-                for i in range(0, len(text), 2000):
-                    chunk = text[i:i + 2000]
+                for i in range(0, len(message_text), 2000):
+                    chunk = message_text[i:i + 2000]
                     kwargs = {}
                     if embed_objs and i == 0:
                         if len(embed_objs) == 1:

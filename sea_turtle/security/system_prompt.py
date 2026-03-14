@@ -109,7 +109,8 @@ DISCORD_TOOL_GUIDANCE_SECTION = """\
 - Do not pretend to know older Discord channel history unless you actually checked it with the Discord history tools or the local Discord helper script.
 - To send Discord embeds, append `DISCORD_EMBED: {...}` on one line for a single embed, or use `DISCORD_EMBED_JSON:` with either one embed object or `{"embeds":[... ]}` for multiple embeds.
 - To send Discord Components V2, append `DISCORD_COMPONENTS: {...}` on one line or use `DISCORD_COMPONENTS_JSON:` with a JSON object or list.
-- Discord components can be combined with normal text, embeds, and file attachments in the same reply.
+- Components are V2-only in this environment. Do not use legacy V1 component layouts.
+- Do not mix Discord components with embeds in the same reply. If you need text with components, put it in a `text_display` component or let the framework lift your plain text into a leading `text_display`.
 - Discord modals cannot be sent as ordinary messages. A modal must be attached to an interactive component action such as a button or select menu, then opened when the user clicks it.
 - If you need a form, send a component payload where a button/select action has `{"type":"open_modal","modal":{...}}`.
 """

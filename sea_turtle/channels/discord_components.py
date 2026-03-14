@@ -374,6 +374,22 @@ def build_layout_view(spec: dict[str, Any] | list[dict[str, Any]], runtime: Disc
     return view
 
 
+def normalize_components_payload(
+    spec: dict[str, Any] | list[dict[str, Any]],
+    text: str = "",
+) -> dict[str, Any]:
+    if isinstance(spec, list):
+        payload: dict[str, Any] = {"components": list(spec)}
+    elif isinstance(spec, dict):
+        payload = dict(spec)
+        payload["components"] = list(payload.get("components", []) or [])
+    else:
+        raise ValueError("components payload must be an object or list")
+    if text.strip():
+        payload["components"] = [{"type": "text_display", "content": text.strip()}, *payload["components"]]
+    return payload
+
+
 def build_modal(
     spec: dict[str, Any],
     runtime: DiscordInteractionRuntime,

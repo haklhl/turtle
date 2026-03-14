@@ -1,7 +1,11 @@
 import unittest
 
 from sea_turtle.daemon import Daemon
-from sea_turtle.channels.discord_components import build_layout_view, DiscordInteractionRuntime
+from sea_turtle.channels.discord_components import (
+    build_layout_view,
+    DiscordInteractionRuntime,
+    normalize_components_payload,
+)
 
 
 class DiscordPayloadTests(unittest.TestCase):
@@ -67,6 +71,14 @@ class DiscordPayloadTests(unittest.TestCase):
             runtime,
         )
         self.assertEqual(len(view.children), 2)
+
+    def test_normalize_components_lifts_plain_text(self):
+        payload = normalize_components_payload(
+            {"components": [{"type": "button", "label": "Go"}]},
+            text="summary first",
+        )
+        self.assertEqual(payload["components"][0], {"type": "text_display", "content": "summary first"})
+        self.assertEqual(payload["components"][1]["type"], "button")
 
 class _DummyChannelManager:
     def __init__(self):
