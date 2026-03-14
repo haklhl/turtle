@@ -98,23 +98,6 @@ TOOL_GUIDANCE_SECTION = """\
 - Ask for confirmation before any destructive or privilege-changing command.
 """
 
-DISCORD_TOOL_GUIDANCE_SECTION = """\
-## Discord Tool Guidance
-- Discord read/search tools are available only in Discord conversations.
-- Use `discord_channel_info` to inspect the current channel or thread when channel structure matters.
-- Use `discord_read_messages` to read recent messages from the current Discord channel or a specified Discord channel id.
-- Use `discord_search_messages` to search Discord history inside the current guild when you need older mentions, decisions, or references.
-- Prefer the current Discord channel and guild by default. Only search other ids when the user clearly asks for them.
-- If the user asks what was said earlier in this Discord channel, who said something, what the recent discussion was, or what the group already decided, read or search Discord history before answering.
-- Do not pretend to know older Discord channel history unless you actually checked it with the Discord history tools or the local Discord helper script.
-- To send Discord embeds, append `DISCORD_EMBED: {...}` on one line for a single embed, or use `DISCORD_EMBED_JSON:` with either one embed object or `{"embeds":[... ]}` for multiple embeds.
-- To send Discord Components V2, append `DISCORD_COMPONENTS: {...}` on one line or use `DISCORD_COMPONENTS_JSON:` with a JSON object or list.
-- Components are V2-only in this environment. Do not use legacy V1 component layouts.
-- Do not mix Discord components with embeds in the same reply. If you need text with components, put it in a `text_display` component or let the framework lift your plain text into a leading `text_display`.
-- Discord modals cannot be sent as ordinary messages. A modal must be attached to an interactive component action such as a button or select menu, then opened when the user clicks it.
-- If you need a form, send a component payload where a button/select action has `{"type":"open_modal","modal":{...}}`.
-"""
-
 def get_os_info() -> dict[str, str]:
     """Get current OS information."""
     return {
@@ -186,8 +169,6 @@ def build_system_prompt(
 
     # 3. Skills (only if non-empty)
     parts.append(TOOL_GUIDANCE_SECTION)
-    if channel_name == "discord":
-        parts.append(DISCORD_TOOL_GUIDANCE_SECTION)
     # 4. Skills (only if non-empty)
     skills_text = skills_content.strip()
     if skills_text and not _is_empty_skills(skills_text):
