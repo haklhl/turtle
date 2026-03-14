@@ -951,7 +951,7 @@ class AgentWorker:
 
         # Build system prompt
         rules_content = load_rules(self.workspace)
-        skills_content = load_skills(self.workspace)
+        skills_content = load_skills(self.workspace, source)
         memory_content = self.memory.read()
         system_prompt = build_system_prompt(
             agent_id=self.agent_id,
@@ -1209,7 +1209,7 @@ class AgentWorker:
                         msg.get("guild_id"),
                     )
                     rules_content = load_rules(self.workspace)
-                    skills_content = load_skills(self.workspace)
+                    skills_content = load_skills(self.workspace, msg.get("source", "unknown"))
                     memory_content = self.memory.read()
                     context.set_system_prompt(
                         build_system_prompt(

@@ -115,7 +115,7 @@ class Daemon:
             agent_id=agent_id,
             agent_config=agent_cfg,
             shell_config=self.config.get("shell", {}),
-            skills_content=load_skills(workspace),
+            skills_content=load_skills(workspace, source),
             memory_content=memory.read(),
             rules_content=load_rules(workspace),
             channel_name=source,

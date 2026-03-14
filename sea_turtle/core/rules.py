@@ -7,6 +7,20 @@ from sea_turtle.core.jobs import init_job_store
 from sea_turtle.core.tasks import init_schedule_store, list_due_schedules, render_schedule_file
 
 
+def _read_text_if_exists(path: Path) -> str:
+    try:
+        if path.exists():
+            return path.read_text(encoding="utf-8")
+    except Exception:
+        pass
+    return ""
+
+
+def _join_sections(parts: list[str]) -> str:
+    cleaned = [part.strip() for part in parts if part and part.strip()]
+    return "\n\n".join(cleaned)
+
+
 def load_rules(workspace: str) -> str:
     """Load rules.md content from agent workspace.
 
@@ -26,23 +40,35 @@ def load_rules(workspace: str) -> str:
     return ""
 
 
-def load_skills(workspace: str) -> str:
-    """Load skills.md content from agent workspace.
+def load_global_skills(source: str = "unknown") -> str:
+    """Load project-wide skills, with optional channel-specific fragments."""
+
+    repo_root = Path(__file__).resolve().parents[2]
+    skills_dir = repo_root / "skills"
+    parts = [
+        _read_text_if_exists(skills_dir / "common.md"),
+        _read_text_if_exists(skills_dir / f"{source}.md"),
+    ]
+    return _join_sections(parts)
+
+
+def load_skills(workspace: str, source: str = "unknown") -> str:
+    """Load global and agent skills content, with channel-specific fragments.
 
     Args:
         workspace: Path to agent workspace directory.
+        source: Channel source, e.g. telegram/discord.
 
     Returns:
         Skills content string, or empty string if not found.
     """
-    skills_file = os.path.join(workspace, "skills.md")
-    try:
-        if os.path.exists(skills_file):
-            with open(skills_file, "r", encoding="utf-8") as f:
-                return f.read()
-    except Exception:
-        pass
-    return ""
+    ws = Path(workspace)
+    parts = [
+        load_global_skills(source),
+        _read_text_if_exists(ws / "skills.md"),
+        _read_text_if_exists(ws / f"skills.{source}.md"),
+    ]
+    return _join_sections(parts)
 
 
 def load_task(workspace: str) -> str:
