@@ -33,6 +33,9 @@
 - 如果需要按钮、选择器、分隔线、文本块等 Discord Components V2，在最终回复中附加 `DISCORD_COMPONENTS: {...}` 单行 JSON，或 `DISCORD_COMPONENTS_JSON:` 代码块。
 - Discord 组件这里强制按 V2 语义使用，不要设计旧式 V1 组件布局。
 - 不要把 Discord components 和 embed 混在同一条回复里；如果既要说明文字又要组件，把说明文字做成 `text_display`，或者直接把普通正文写在前面，框架会自动转成前置 `text_display`。
+- 顶层组件优先使用 `text_display`、`separator`、`section`、`container`、`media_gallery`、`thumbnail` 这类布局型组件。
+- `button` 和 `select` 更稳妥的写法是放进 `container` 或作为 `section.accessory`，不要默认把它们直接丢在最外层。
+- 框架当前会自动把顶层连续出现的 `button/select` 包进一个 `container` 兜底，但这只是兼容层，不应依赖它代替正确结构设计。
 - Modal 不能像普通消息一样直接发送；如果要让用户填写表单，先发送组件，再在按钮或选择器的 `action` 里使用 `{"type":"open_modal","modal":{...}}`。
 - 如果用户是在 Discord 里要一个交互式表单或面板，优先用“组件 + modal”结构，而不是让用户手敲长段格式化文本。
 - Discord Components V2 / Modal 速查：
@@ -88,4 +91,5 @@
     - Components 这里强制按 V2 语义使用
     - 不要把 `components` 和 `embed` 放在同一条回复里
     - 如果既要说明文字又要组件，优先用 `text_display`
+    - 顶层交互组件优先包进 `container`，不要把一串 `button/select` 裸放在最外层
     - Modal 不能直接发送，只能通过按钮或选择器的 `open_modal` action 打开
