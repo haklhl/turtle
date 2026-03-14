@@ -78,7 +78,7 @@ class DiscordPayloadTests(unittest.TestCase):
             text="summary first",
         )
         self.assertEqual(payload["components"][0], {"type": "text_display", "content": "summary first"})
-        self.assertEqual(payload["components"][1]["type"], "container")
+        self.assertEqual(payload["components"][1]["type"], "action_row")
         self.assertEqual(payload["components"][1]["children"][0]["type"], "button")
 
     def test_normalize_components_wraps_top_level_interactives(self):
@@ -94,12 +94,31 @@ class DiscordPayloadTests(unittest.TestCase):
             }
         )
         self.assertEqual(payload["components"][0]["type"], "text_display")
-        self.assertEqual(payload["components"][1]["type"], "container")
+        self.assertEqual(payload["components"][1]["type"], "action_row")
         self.assertEqual(
             [item["type"] for item in payload["components"][1]["children"]],
             ["button", "button", "select"],
         )
         self.assertEqual(payload["components"][2]["type"], "separator")
+
+    def test_build_layout_view_supports_action_row(self):
+        runtime = DiscordInteractionRuntime(channel_manager=_DummyChannelManager(), agent_id="default", channel_id=123)
+        view = build_layout_view(
+            {
+                "components": [
+                    {
+                        "type": "action_row",
+                        "children": [
+                            {"type": "button", "label": "One"},
+                            {"type": "button", "label": "Two"},
+                        ],
+                    }
+                ]
+            },
+            runtime,
+        )
+        self.assertEqual(len(view.children), 1)
+        self.assertEqual(view.children[0].__class__.__name__, "ActionRow")
 
 class _DummyChannelManager:
     def __init__(self):

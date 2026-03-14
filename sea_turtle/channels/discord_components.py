@@ -290,6 +290,13 @@ def _resolve_text_style(value: Any) -> discord.TextStyle:
 
 def _build_component_item(spec: dict[str, Any], runtime: DiscordInteractionRuntime) -> discord.ui.Item[Any]:
     item_type = str(spec.get("type") or "").strip().lower()
+    if item_type == "action_row":
+        children = [
+            _build_component_item(child, runtime)
+            for child in spec.get("children", []) or []
+            if isinstance(child, dict)
+        ]
+        return discord.ui.ActionRow(*children)
     if item_type in {"text", "text_display"}:
         return discord.ui.TextDisplay(str(spec.get("content") or ""))
     if item_type == "separator":
@@ -345,11 +352,10 @@ def _build_component_item(spec: dict[str, Any], runtime: DiscordInteractionRunti
             accessory=_build_component_item(accessory_spec, runtime),
         )
     if item_type == "container":
-        children = [
-            _build_component_item(child, runtime)
-            for child in spec.get("children", []) or []
-            if isinstance(child, dict)
-        ]
+        normalized_children = _wrap_interactives_in_action_rows(
+            [child for child in spec.get("children", []) or [] if isinstance(child, dict)]
+        )
+        children = [_build_component_item(child, runtime) for child in normalized_children]
         return discord.ui.Container(
             *children,
             accent_color=spec.get("accent_color"),
@@ -387,11 +393,11 @@ def normalize_components_payload(
         raise ValueError("components payload must be an object or list")
     if text.strip():
         payload["components"] = [{"type": "text_display", "content": text.strip()}, *payload["components"]]
-    payload["components"] = _wrap_top_level_interactives(payload["components"])
+    payload["components"] = _wrap_interactives_in_action_rows(payload["components"])
     return payload
 
 
-def _wrap_top_level_interactives(components: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _wrap_interactives_in_action_rows(components: list[dict[str, Any]]) -> list[dict[str, Any]]:
     wrapped: list[dict[str, Any]] = []
     buffer: list[dict[str, Any]] = []
 
@@ -399,7 +405,7 @@ def _wrap_top_level_interactives(components: list[dict[str, Any]]) -> list[dict[
         nonlocal buffer
         if not buffer:
             return
-        wrapped.append({"type": "container", "children": buffer})
+        wrapped.append({"type": "action_row", "children": buffer})
         buffer = []
 
     for item in components:
