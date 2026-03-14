@@ -115,16 +115,6 @@ DISCORD_TOOL_GUIDANCE_SECTION = """\
 - If you need a form, send a component payload where a button/select action has `{"type":"open_modal","modal":{...}}`.
 """
 
-STICKER_GUIDANCE_SECTION = """\
-## Telegram Sticker Guidance
-- Emotion stickers are enabled for this agent.
-- If your reply carries a visible emotion and a sticker would help, add one extra line at the end:
-  `STICKER_EMOTION: warm`
-- Supported emotion labels depend on the local sticker library. Common labels include: warm, happy, playful, embarrassed, angry, sad, calm, serious, surprised, tired, supportive, refuse.
-- Use at most one sticker per reply, and only when it matches your tone.
-"""
-
-
 def get_os_info() -> dict[str, str]:
     """Get current OS information."""
     return {
@@ -198,10 +188,6 @@ def build_system_prompt(
     parts.append(TOOL_GUIDANCE_SECTION)
     if channel_name == "discord":
         parts.append(DISCORD_TOOL_GUIDANCE_SECTION)
-    tg_cfg = agent_config.get("telegram", {})
-    if channel_name == "telegram" and tg_cfg.get("stickers_enabled", False):
-        parts.append(STICKER_GUIDANCE_SECTION)
-
     # 4. Skills (only if non-empty)
     skills_text = skills_content.strip()
     if skills_text and not _is_empty_skills(skills_text):
