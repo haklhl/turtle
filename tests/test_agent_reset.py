@@ -37,6 +37,29 @@ class AgentResetTests(unittest.TestCase):
             _, reloaded = worker_c._get_context("telegram", 1, 2)
             self.assertEqual(reloaded.messages, [])
 
+    def test_discord_context_is_channel_scoped_per_agent(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = {
+                "context": {},
+                "conversation_persistence": {"enabled": True},
+                "shell": {},
+                "agents": {
+                    "default": {
+                        "workspace": tmpdir,
+                        "model": "codex-5.4",
+                        "sandbox": "confined",
+                    }
+                },
+            }
+
+            worker = AgentWorker("default", config, Queue(), Queue())
+            conversation_id, ctx = worker._get_context("discord", 222, 999, 111)
+            ctx.add_message("user", "hello")
+
+            self.assertEqual(conversation_id, "discord|guild:111|channel:222|agent:default")
+            persisted = Path(tmpdir) / ".contexts" / "discord__guild_111__channel_222__agent_default.json"
+            self.assertTrue(persisted.exists())
+
 
 if __name__ == "__main__":
     unittest.main()

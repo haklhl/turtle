@@ -295,7 +295,7 @@ class Daemon:
 
     async def handle_system_command(
         self, command: str, agent_id: str, source: str = "telegram",
-        chat_id: Any = None, user_id: Any = None,
+        chat_id: Any = None, user_id: Any = None, guild_id: Any = None,
     ) -> str:
         """Handle a /command from a channel.
 
@@ -348,6 +348,7 @@ class Daemon:
                     "source": source,
                     "chat_id": chat_id,
                     "user_id": user_id,
+                    "guild_id": guild_id,
                 })
                 return f"✅ Context reset for {source}."
             return "⚠️ Agent is not running."
@@ -365,6 +366,7 @@ class Daemon:
                     "source": source,
                     "chat_id": chat_id,
                     "user_id": user_id,
+                    "guild_id": guild_id,
                 })
                 try:
                     resp = await asyncio.wait_for(future, timeout=10.0)
@@ -622,6 +624,7 @@ class Daemon:
         source: str,
         chat_id: Any = None,
         user_id: Any = None,
+        guild_id: Any = None,
         attachments: list[str] | None = None,
     ) -> bool:
         """Route an incoming message to the appropriate handler.
@@ -653,6 +656,7 @@ class Daemon:
                     "source": source,
                     "chat_id": chat_id,
                     "user_id": user_id,
+                    "guild_id": guild_id,
                     "content": (
                         "🧩 当前已有后台任务在执行。\n"
                         f"{self._format_job_status(active_job)}\n\n"
@@ -672,9 +676,10 @@ class Daemon:
                 "type": "reply",
                 "agent_id": agent_id,
                 "source": source,
-                "chat_id": chat_id,
-                "user_id": user_id,
-                "content": (
+                    "chat_id": chat_id,
+                    "user_id": user_id,
+                    "guild_id": guild_id,
+                    "content": (
                     "收到，已按后台任务接单处理。\n"
                     f"- Job: {job.get('id')}\n"
                     f"- Title: {job.get('title')}\n"
@@ -690,6 +695,7 @@ class Daemon:
             "source": source,
             "chat_id": chat_id,
             "user_id": user_id,
+            "guild_id": guild_id,
             "attachments": attachments or [],
         })
 

@@ -148,12 +148,19 @@ class DiscordChannel(BaseChannel):
             guild_id = message.guild.id if message.guild else 0
             logger.debug(f"user_id={user_id}, chat_id={chat_id}, guild_id={guild_id}")
 
+            if isinstance(message.channel, discord.DMChannel):
+                logger.debug("Ignoring Discord DM message; Discord is channel-scoped for this deployment.")
+                return
+
             # Check guild/channel allowlist
             if guild_id and not channel._is_guild_allowed(guild_id, dc_cfg):
                 logger.debug(f"Guild {guild_id} not allowed")
                 return
             if not channel._is_channel_allowed(chat_id, dc_cfg):
                 logger.debug(f"Channel {chat_id} not allowed")
+                return
+            if not channel._is_user_allowed(user_id, agent_id, "discord"):
+                logger.debug(f"User {user_id} not allowed for agent '{agent_id}'")
                 return
 
             # Check if should respond (mentions only mode)
@@ -193,6 +200,7 @@ class DiscordChannel(BaseChannel):
                     source="discord",
                     chat_id=chat_id,
                     user_id=user_id,
+                    guild_id=guild_id,
                 )
                 if reply:
                     await channel._send_discord_message(message.channel, reply)
@@ -204,6 +212,7 @@ class DiscordChannel(BaseChannel):
                     source="discord",
                     chat_id=chat_id,
                     user_id=user_id,
+                    guild_id=guild_id,
                 )
                 if not success:
                     await message.channel.send("⚠️ Agent is not available.")
@@ -214,6 +223,7 @@ class DiscordChannel(BaseChannel):
             reply = await channel.daemon.handle_system_command(
                 command="/start", agent_id=agent_id, source="discord",
                 chat_id=interaction.channel_id, user_id=interaction.user.id,
+                guild_id=interaction.guild_id,
             )
             await interaction.response.send_message(reply, ephemeral=True)
 
@@ -222,6 +232,7 @@ class DiscordChannel(BaseChannel):
             reply = await channel.daemon.handle_system_command(
                 command="/help", agent_id=agent_id, source="discord",
                 chat_id=interaction.channel_id, user_id=interaction.user.id,
+                guild_id=interaction.guild_id,
             )
             await interaction.response.send_message(reply, ephemeral=True)
 
@@ -230,6 +241,7 @@ class DiscordChannel(BaseChannel):
             reply = await channel.daemon.handle_system_command(
                 command="/context", agent_id=agent_id, source="discord",
                 chat_id=interaction.channel_id, user_id=interaction.user.id,
+                guild_id=interaction.guild_id,
             )
             await interaction.response.send_message(reply, ephemeral=True)
 
@@ -241,6 +253,7 @@ class DiscordChannel(BaseChannel):
             reply = await channel.daemon.handle_system_command(
                 command="/prompt", agent_id=agent_id, source="discord",
                 chat_id=interaction.channel_id, user_id=interaction.user.id,
+                guild_id=interaction.guild_id,
             )
             await interaction.response.send_message(reply, ephemeral=True)
 
@@ -249,6 +262,7 @@ class DiscordChannel(BaseChannel):
             reply = await channel.daemon.handle_system_command(
                 command="/usage", agent_id=agent_id, source="discord",
                 chat_id=interaction.channel_id, user_id=interaction.user.id,
+                guild_id=interaction.guild_id,
             )
             await interaction.response.send_message(reply, ephemeral=True)
 
@@ -257,6 +271,7 @@ class DiscordChannel(BaseChannel):
             reply = await channel.daemon.handle_system_command(
                 command="/status", agent_id=agent_id, source="discord",
                 chat_id=interaction.channel_id, user_id=interaction.user.id,
+                guild_id=interaction.guild_id,
             )
             await interaction.response.send_message(reply, ephemeral=True)
 
@@ -268,6 +283,7 @@ class DiscordChannel(BaseChannel):
             reply = await channel.daemon.handle_system_command(
                 command="/reset", agent_id=agent_id, source="discord",
                 chat_id=interaction.channel_id, user_id=interaction.user.id,
+                guild_id=interaction.guild_id,
             )
             await interaction.response.send_message(reply, ephemeral=True)
 
@@ -279,6 +295,7 @@ class DiscordChannel(BaseChannel):
             reply = await channel.daemon.handle_system_command(
                 command="/restart", agent_id=agent_id, source="discord",
                 chat_id=interaction.channel_id, user_id=interaction.user.id,
+                guild_id=interaction.guild_id,
             )
             await interaction.response.send_message(reply, ephemeral=True)
 
@@ -291,6 +308,7 @@ class DiscordChannel(BaseChannel):
             reply = await channel.daemon.handle_system_command(
                 command=f"/model {action}", agent_id=agent_id, source="discord",
                 chat_id=interaction.channel_id, user_id=interaction.user.id,
+                guild_id=interaction.guild_id,
             )
             await interaction.response.send_message(reply, ephemeral=True)
 
@@ -309,19 +327,17 @@ class DiscordChannel(BaseChannel):
 
     async def send_message(self, chat_id: Any, text: str, agent_id: str | None = None) -> None:
         """Send a message to a Discord channel by ID."""
-        bot = None
-        if agent_id and agent_id in self.bots:
-            bot = self.bots[agent_id]
-        elif self.bots:
-            bot = next(iter(self.bots.values()))
+        if not agent_id or agent_id not in self.bots:
+            logger.warning(f"Discord bot not available for agent '{agent_id}', cannot send reply to {chat_id}")
+            return
+        bot = self.bots[agent_id]
 
-        if bot:
-            try:
-                channel = bot.get_channel(int(chat_id))
-                if channel:
-                    await self._send_discord_message(channel, text)
-            except Exception as e:
-                logger.error(f"Failed to send Discord message to {chat_id}: {e}")
+        try:
+            channel = bot.get_channel(int(chat_id))
+            if channel:
+                await self._send_discord_message(channel, text)
+        except Exception as e:
+            logger.error(f"Failed to send Discord message to {chat_id}: {e}")
 
     async def stop(self) -> None:
         """Stop all Discord bots."""

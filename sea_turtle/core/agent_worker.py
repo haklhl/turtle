@@ -393,9 +393,16 @@ class AgentWorker:
         self._total_processing_time_ms = 0
         self._last_processing_time_ms = 0
 
-    @staticmethod
-    def _conversation_id(source: str, chat_id: Any = None, user_id: Any = None) -> str:
+    def _conversation_id(
+        self,
+        source: str,
+        chat_id: Any = None,
+        user_id: Any = None,
+        guild_id: Any = None,
+    ) -> str:
         """Build a stable per-conversation key."""
+        if source == "discord" and guild_id not in (None, "", 0) and chat_id is not None:
+            return f"discord|guild:{guild_id}|channel:{chat_id}|agent:{self.agent_id}"
         parts = [source or "unknown"]
         if chat_id is not None:
             parts.append(f"chat:{chat_id}")
@@ -403,9 +410,15 @@ class AgentWorker:
             parts.append(f"user:{user_id}")
         return "|".join(str(part) for part in parts)
 
-    def _get_context(self, source: str, chat_id: Any = None, user_id: Any = None) -> tuple[str, ContextManager]:
+    def _get_context(
+        self,
+        source: str,
+        chat_id: Any = None,
+        user_id: Any = None,
+        guild_id: Any = None,
+    ) -> tuple[str, ContextManager]:
         """Get or create a ContextManager for a specific conversation."""
-        conversation_id = self._conversation_id(source, chat_id, user_id)
+        conversation_id = self._conversation_id(source, chat_id, user_id, guild_id)
         if conversation_id not in self.contexts:
             persistence_cfg = self.config.get("conversation_persistence", {})
             context_dir_name = persistence_cfg.get("context_dir_name", ".contexts")
@@ -420,9 +433,15 @@ class AgentWorker:
             self.contexts[conversation_id] = ContextManager(self.config, persistence_path=context_path)
         return conversation_id, self.contexts[conversation_id]
 
-    def _reset_context(self, source: str, chat_id: Any = None, user_id: Any = None) -> str:
+    def _reset_context(
+        self,
+        source: str,
+        chat_id: Any = None,
+        user_id: Any = None,
+        guild_id: Any = None,
+    ) -> str:
         """Reset a conversation context, loading persisted state first if needed."""
-        conversation_id, context = self._get_context(source, chat_id, user_id)
+        conversation_id, context = self._get_context(source, chat_id, user_id, guild_id)
         context.reset()
         return conversation_id
 
@@ -760,6 +779,7 @@ class AgentWorker:
         source: str = "unknown",
         chat_id: Any = None,
         user_id: Any = None,
+        guild_id: Any = None,
         attachments: list[str] | None = None,
     ) -> str:
         """Process a user message through the LLM with tool calling loop."""
@@ -772,7 +792,7 @@ class AgentWorker:
             )
 
         # Get context for this channel
-        conversation_id, context = self._get_context(source, chat_id, user_id)
+        conversation_id, context = self._get_context(source, chat_id, user_id, guild_id)
 
         # Build system prompt
         rules_content = load_rules(self.workspace)
@@ -819,6 +839,7 @@ class AgentWorker:
                     "source": source,
                     "chat_id": chat_id,
                     "user_id": user_id,
+                    "guild_id": guild_id,
                     "image_paths": image_attachments,
                 },
             )
@@ -911,7 +932,7 @@ class AgentWorker:
         source = msg.get("source", "unknown")
         self.logger.info(f"Processing message from {source}: {user_text[:100]}...")
         started_at = time.monotonic()
-        _, context = self._get_context(source, msg.get("chat_id"), msg.get("user_id"))
+        _, context = self._get_context(source, msg.get("chat_id"), msg.get("user_id"), msg.get("guild_id"))
 
         try:
             self.logger.info(f"Calling LLM for message from {source}...")
@@ -920,6 +941,7 @@ class AgentWorker:
                 source,
                 chat_id=msg.get("chat_id"),
                 user_id=msg.get("user_id"),
+                guild_id=msg.get("guild_id"),
                 attachments=msg.get("attachments", []),
             )
             elapsed_ms = int((time.monotonic() - started_at) * 1000)
@@ -1006,12 +1028,22 @@ class AgentWorker:
 
                 elif msg_type == "reset_context":
                     source = msg.get("source", "unknown")
-                    conversation_id = self._reset_context(source, msg.get("chat_id"), msg.get("user_id"))
+                    conversation_id = self._reset_context(
+                        source,
+                        msg.get("chat_id"),
+                        msg.get("user_id"),
+                        msg.get("guild_id"),
+                    )
                     self.logger.info(f"Context reset for {conversation_id}")
 
                 elif msg_type == "get_stats":
                     source = msg.get("source", "unknown")
-                    _, context = self._get_context(source, msg.get("chat_id"), msg.get("user_id"))
+                    _, context = self._get_context(
+                        source,
+                        msg.get("chat_id"),
+                        msg.get("user_id"),
+                        msg.get("guild_id"),
+                    )
                     rules_content = load_rules(self.workspace)
                     skills_content = load_skills(self.workspace)
                     memory_content = self.memory.read()
