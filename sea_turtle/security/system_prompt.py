@@ -108,6 +108,10 @@ DISCORD_TOOL_GUIDANCE_SECTION = """\
 - If the user asks what was said earlier in this Discord channel, who said something, what the recent discussion was, or what the group already decided, read or search Discord history before answering.
 - Do not pretend to know older Discord channel history unless you actually checked it with the Discord history tools or the local Discord helper script.
 - To send Discord embeds, append `DISCORD_EMBED: {...}` on one line for a single embed, or use `DISCORD_EMBED_JSON:` with either one embed object or `{"embeds":[... ]}` for multiple embeds.
+- To send Discord Components V2, append `DISCORD_COMPONENTS: {...}` on one line or use `DISCORD_COMPONENTS_JSON:` with a JSON object or list.
+- Discord components can be combined with normal text, embeds, and file attachments in the same reply.
+- Discord modals cannot be sent as ordinary messages. A modal must be attached to an interactive component action such as a button or select menu, then opened when the user clicks it.
+- If you need a form, send a component payload where a button/select action has `{"type":"open_modal","modal":{...}}`.
 """
 
 STICKER_GUIDANCE_SECTION = """\

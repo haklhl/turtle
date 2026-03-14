@@ -10,6 +10,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from sea_turtle.channels.base import BaseChannel
+from sea_turtle.channels.discord_components import build_layout_view, DiscordInteractionRuntime
 
 if TYPE_CHECKING:
     from sea_turtle.daemon import Daemon
@@ -204,7 +205,7 @@ class DiscordChannel(BaseChannel):
                     guild_id=guild_id,
                 )
                 if reply:
-                    await channel._send_discord_message(message.channel, reply)
+                    await channel._send_discord_message(message.channel, reply, agent_id=agent_id)
             else:
                 # Regular message - forward to agent
                 success = channel.daemon.route_message(
@@ -317,8 +318,10 @@ class DiscordChannel(BaseChannel):
         self,
         channel,
         text: str,
+        agent_id: str | None = None,
         embed: dict | None = None,
         embeds: list[dict] | None = None,
+        components: dict | list[dict] | None = None,
         attachments: list[str] | None = None,
     ) -> None:
         """Send a message to a Discord channel, optionally with embeds/files."""
@@ -326,6 +329,10 @@ class DiscordChannel(BaseChannel):
             embed_objs = [discord.Embed.from_dict(item) for item in embeds or [] if isinstance(item, dict)]
             if not embed_objs and embed:
                 embed_objs = [discord.Embed.from_dict(embed)]
+            view = None
+            if components and agent_id:
+                runtime = DiscordInteractionRuntime(self, agent_id, channel.id)
+                view = build_layout_view(components, runtime)
             file_paths = [Path(item).expanduser() for item in attachments or [] if str(item).strip()]
             file_paths = [path for path in file_paths if path.exists() and path.is_file()]
             if len(text) <= 2000:
@@ -335,11 +342,13 @@ class DiscordChannel(BaseChannel):
                         kwargs["embed"] = embed_objs[0]
                     else:
                         kwargs["embeds"] = embed_objs[:10]
+                if view:
+                    kwargs["view"] = view
                 if file_paths:
                     kwargs["files"] = [discord.File(str(path), filename=path.name) for path in file_paths[:10]]
                 if text:
                     await channel.send(text, **kwargs)
-                elif embed_objs or file_paths:
+                elif embed_objs or file_paths or view:
                     await channel.send(**kwargs)
             else:
                 for i in range(0, len(text), 2000):
@@ -350,6 +359,8 @@ class DiscordChannel(BaseChannel):
                             kwargs["embed"] = embed_objs[0]
                         else:
                             kwargs["embeds"] = embed_objs[:10]
+                    if view and i == 0:
+                        kwargs["view"] = view
                     if file_paths and i == 0:
                         kwargs["files"] = [discord.File(str(path), filename=path.name) for path in file_paths[:10]]
                     await channel.send(chunk, **kwargs)
@@ -364,6 +375,7 @@ class DiscordChannel(BaseChannel):
         agent_id: str | None = None,
         embed: dict | None = None,
         embeds: list[dict] | None = None,
+        components: dict | list[dict] | None = None,
         attachments: list[str] | None = None,
     ) -> None:
         """Send a message to a Discord channel by ID."""
@@ -378,8 +390,10 @@ class DiscordChannel(BaseChannel):
                 await self._send_discord_message(
                     channel,
                     text,
+                    agent_id=agent_id,
                     embed=embed,
                     embeds=embeds,
+                    components=components,
                     attachments=attachments,
                 )
         except Exception as e:

@@ -870,6 +870,7 @@ class Daemon:
                 agent_id,
                 payload.get("discord_embed"),
                 payload.get("discord_embeds"),
+                payload.get("discord_components"),
                 payload["attachments"],
             )
         elif source == "heartbeat":
@@ -887,6 +888,7 @@ class Daemon:
         text_lines = []
         discord_embed = None
         discord_embeds = None
+        discord_components = None
         lines = (content or "").splitlines()
         i = 0
         while i < len(lines):
@@ -936,6 +938,39 @@ class Daemon:
                                 discord_embeds = [item for item in parsed.get("embeds", []) if isinstance(item, dict)]
                         elif isinstance(parsed, dict):
                             discord_embed = parsed
+            elif line.startswith("DISCORD_COMPONENTS:"):
+                raw = line.split(":", 1)[1].strip()
+                if raw and discord_components is None:
+                    try:
+                        parsed = json.loads(raw)
+                    except json.JSONDecodeError:
+                        text_lines.append(line)
+                    else:
+                        if isinstance(parsed, (dict, list)):
+                            discord_components = parsed
+            elif line.startswith("DISCORD_COMPONENTS_JSON:"):
+                block_lines: list[str] = []
+                i += 1
+                if i < len(lines) and lines[i].strip().startswith("```"):
+                    i += 1
+                    while i < len(lines) and lines[i].strip() != "```":
+                        block_lines.append(lines[i])
+                        i += 1
+                else:
+                    while i < len(lines) and lines[i].strip():
+                        block_lines.append(lines[i])
+                        i += 1
+                    i -= 1
+                if block_lines and discord_components is None:
+                    raw = "\n".join(block_lines).strip()
+                    try:
+                        parsed = json.loads(raw)
+                    except json.JSONDecodeError:
+                        text_lines.append("DISCORD_COMPONENTS_JSON:")
+                        text_lines.extend(block_lines)
+                    else:
+                        if isinstance(parsed, (dict, list)):
+                            discord_components = parsed
             else:
                 text_lines.append(line)
             i += 1
@@ -945,6 +980,7 @@ class Daemon:
             "sticker_emotion": sticker_emotion,
             "discord_embed": discord_embed,
             "discord_embeds": discord_embeds,
+            "discord_components": discord_components,
         }
 
     async def _send_telegram_reply(
@@ -991,6 +1027,7 @@ class Daemon:
         agent_id: str,
         embed: dict | None = None,
         embeds: list[dict] | None = None,
+        components: dict | list[dict] | None = None,
         attachments: list[str] | None = None,
     ):
         """Send reply via Discord."""
@@ -1001,6 +1038,7 @@ class Daemon:
                 agent_id,
                 embed=embed,
                 embeds=embeds,
+                components=components,
                 attachments=attachments,
             )
         else:
