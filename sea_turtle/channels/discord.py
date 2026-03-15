@@ -255,7 +255,7 @@ class DiscordChannel(BaseChannel):
                     await message.channel.send("⚠️ Agent is not available.")
 
         # Register slash commands
-        @bot.tree.command(name="start", description="Start the bot and show welcome message")
+        @bot.tree.command(name="sys_start", description="Start the bot and show welcome message")
         async def cmd_start(interaction: discord.Interaction):
             reply = await channel.daemon.handle_system_command(
                 command="/start", agent_id=agent_id, source="discord",
@@ -264,7 +264,7 @@ class DiscordChannel(BaseChannel):
             )
             await interaction.response.send_message(reply, ephemeral=True)
 
-        @bot.tree.command(name="help", description="Show available commands")
+        @bot.tree.command(name="sys_help", description="Show available commands")
         async def cmd_help(interaction: discord.Interaction):
             reply = await channel.daemon.handle_system_command(
                 command="/help", agent_id=agent_id, source="discord",
@@ -273,7 +273,7 @@ class DiscordChannel(BaseChannel):
             )
             await interaction.response.send_message(reply, ephemeral=True)
 
-        @bot.tree.command(name="context", description="Show context statistics")
+        @bot.tree.command(name="sys_context", description="Show context statistics")
         async def cmd_context(interaction: discord.Interaction):
             reply = await channel.daemon.handle_system_command(
                 command="/context", agent_id=agent_id, source="discord",
@@ -282,7 +282,7 @@ class DiscordChannel(BaseChannel):
             )
             await interaction.response.send_message(reply, ephemeral=True)
 
-        @bot.tree.command(name="prompt", description="Show current final system prompt (owner only)")
+        @bot.tree.command(name="sys_prompt", description="Show current final system prompt (owner only)")
         async def cmd_prompt(interaction: discord.Interaction):
             if not channel._is_owner(interaction.user.id, agent_id, "discord"):
                 await interaction.response.send_message("⛔ Owner permission required.", ephemeral=True)
@@ -294,7 +294,7 @@ class DiscordChannel(BaseChannel):
             )
             await interaction.response.send_message(reply, ephemeral=True)
 
-        @bot.tree.command(name="usage", description="Show token usage and costs")
+        @bot.tree.command(name="sys_usage", description="Show token usage and costs")
         async def cmd_usage(interaction: discord.Interaction):
             reply = await channel.daemon.handle_system_command(
                 command="/usage", agent_id=agent_id, source="discord",
@@ -303,7 +303,7 @@ class DiscordChannel(BaseChannel):
             )
             await interaction.response.send_message(reply, ephemeral=True)
 
-        @bot.tree.command(name="status", description="Show agent status")
+        @bot.tree.command(name="sys_status", description="Show agent status")
         async def cmd_status(interaction: discord.Interaction):
             reply = await channel.daemon.handle_system_command(
                 command="/status", agent_id=agent_id, source="discord",
@@ -312,7 +312,7 @@ class DiscordChannel(BaseChannel):
             )
             await interaction.response.send_message(reply, ephemeral=True)
 
-        @bot.tree.command(name="reset", description="Reset conversation context (owner only)")
+        @bot.tree.command(name="sys_reset", description="Reset conversation context (owner only)")
         async def cmd_reset(interaction: discord.Interaction):
             if not channel._is_owner(interaction.user.id, agent_id, "discord"):
                 await interaction.response.send_message("⛔ Owner permission required.", ephemeral=True)
@@ -324,7 +324,7 @@ class DiscordChannel(BaseChannel):
             )
             await interaction.response.send_message(reply, ephemeral=True)
 
-        @bot.tree.command(name="restart", description="Restart agent process (owner only)")
+        @bot.tree.command(name="sys_restart", description="Restart agent process (owner only)")
         async def cmd_restart(interaction: discord.Interaction):
             if not channel._is_owner(interaction.user.id, agent_id, "discord"):
                 await interaction.response.send_message("⛔ Owner permission required.", ephemeral=True)
@@ -336,7 +336,7 @@ class DiscordChannel(BaseChannel):
             )
             await interaction.response.send_message(reply, ephemeral=True)
 
-        @bot.tree.command(name="model", description="List or switch models (owner only)")
+        @bot.tree.command(name="sys_model", description="List or switch models (owner only)")
         @app_commands.describe(action="'list' to show models, or model name to switch")
         async def cmd_model(interaction: discord.Interaction, action: str = "list"):
             if action != "list" and not channel._is_owner(interaction.user.id, agent_id, "discord"):

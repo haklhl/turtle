@@ -24,6 +24,8 @@ class DarwinApexSettings:
     help_channel_id: int | None
     default_model: str
     default_reasoning: str
+    allowed_models: list[str]
+    allowed_reasoning: list[str]
 
 
 def load_settings() -> DarwinApexSettings:
@@ -43,6 +45,8 @@ def load_settings() -> DarwinApexSettings:
         ),
         default_model=str(codex_raw["default_model"]),
         default_reasoning=str(codex_raw["default_reasoning"]),
+        allowed_models=[str(v) for v in codex_raw.get("allowed_models", [])],
+        allowed_reasoning=[str(v) for v in codex_raw.get("allowed_reasoning", [])],
     )
 
 
@@ -59,6 +63,30 @@ class DarwinApexStore:
         ).fetchone()
         return None if row is None else row["value_json"]
 
+    def _set_override(self, scope: str, key: str, value_json: str, updated_by: str) -> None:
+        existing = self.conn.execute(
+            "SELECT id FROM settings_overrides WHERE scope = ? AND key = ?",
+            (scope, key),
+        ).fetchone()
+        if existing:
+            self.conn.execute(
+                """
+                UPDATE settings_overrides
+                SET value_json = ?, updated_by = ?, updated_at = datetime('now')
+                WHERE id = ?
+                """,
+                (value_json, updated_by, existing["id"]),
+            )
+        else:
+            self.conn.execute(
+                """
+                INSERT INTO settings_overrides (id, scope, key, value_json, updated_by, updated_at)
+                VALUES (lower(hex(randomblob(16))), ?, ?, ?, ?, datetime('now'))
+                """,
+                (scope, key, value_json, updated_by),
+            )
+        self.conn.commit()
+
     def current_model(self) -> str:
         raw = self.get_override("codex", "model")
         return json.loads(raw) if raw else self.settings.default_model
@@ -66,6 +94,12 @@ class DarwinApexStore:
     def current_depth(self) -> str:
         raw = self.get_override("codex", "reasoning")
         return json.loads(raw) if raw else self.settings.default_reasoning
+
+    def set_model(self, model: str, updated_by: str) -> None:
+        self._set_override("codex", "model", json.dumps(model), updated_by)
+
+    def set_depth(self, depth: str, updated_by: str) -> None:
+        self._set_override("codex", "reasoning", json.dumps(depth), updated_by)
 
     def worker_status(self, worker_name: str) -> dict[str, Any] | None:
         raw = self.get_override("worker", worker_name)
@@ -518,6 +552,19 @@ def help_request_embed(bundle: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def model_embed(*, current_model: str, allowed_models: list[str], current_depth: str, allowed_reasoning: list[str]) -> dict[str, Any]:
+    return {
+        "title": "角都 模型设置",
+        "color": 0x34495E,
+        "fields": [
+            _field("Current Model", current_model),
+            _field("Allowed Models", ", ".join(allowed_models) or "n/a", inline=False),
+            _field("Current Depth", current_depth),
+            _field("Allowed Depths", ", ".join(allowed_reasoning) or "n/a", inline=False),
+        ],
+    }
+
+
 def last_iter_embeds(bundle: dict[str, Any]) -> list[dict[str, Any]]:
     run = bundle.get("run")
     running_run = bundle.get("running_run")
@@ -682,7 +729,7 @@ def register_discord_commands(bot, channel, agent_id: str) -> None:
             return False
         return True
 
-    @bot.tree.command(name="apex_status", description="查看 DarwinApex 与 MemeHarpoon 状态")
+    @bot.tree.command(name="darwin_status", description="查看 DarwinApex 与 MemeHarpoon 状态")
     async def cmd_apex_status(interaction: discord.Interaction):
         if not await ensure_allowed(interaction):
             return
@@ -692,7 +739,7 @@ def register_discord_commands(bot, channel, agent_id: str) -> None:
             ephemeral=True,
         )
 
-    @bot.tree.command(name="roadmap", description="查看 DarwinApex 长期路线图")
+    @bot.tree.command(name="darwin_roadmap", description="查看 DarwinApex 长期路线图")
     async def cmd_roadmap(interaction: discord.Interaction):
         if not await ensure_allowed(interaction):
             return
@@ -702,7 +749,7 @@ def register_discord_commands(bot, channel, agent_id: str) -> None:
             ephemeral=True,
         )
 
-    @bot.tree.command(name="goals", description="查看 DarwinApex 长期目标")
+    @bot.tree.command(name="darwin_goals", description="查看 DarwinApex 长期目标")
     async def cmd_goals(interaction: discord.Interaction):
         if not await ensure_allowed(interaction):
             return
@@ -710,7 +757,7 @@ def register_discord_commands(bot, channel, agent_id: str) -> None:
         embeds = [discord.Embed.from_dict(item) for item in goals_embeds(bundle)]
         await interaction.response.send_message(embeds=embeds[:10], ephemeral=True)
 
-    @bot.tree.command(name="last_iter", description="查看最近一轮 DarwinApex 迭代")
+    @bot.tree.command(name="darwin_last_iter", description="查看最近一轮 DarwinApex 迭代")
     async def cmd_last_iter(interaction: discord.Interaction):
         if not await ensure_allowed(interaction):
             return
@@ -718,7 +765,7 @@ def register_discord_commands(bot, channel, agent_id: str) -> None:
         embeds = [discord.Embed.from_dict(item) for item in last_iter_embeds(bundle)]
         await interaction.response.send_message(embeds=embeds[:10], ephemeral=True)
 
-    @bot.tree.command(name="positions", description="查看当前持仓")
+    @bot.tree.command(name="darwin_positions", description="查看当前持仓")
     async def cmd_positions(interaction: discord.Interaction):
         if not await ensure_allowed(interaction):
             return
@@ -736,7 +783,7 @@ def register_discord_commands(bot, channel, agent_id: str) -> None:
             ephemeral=True,
         )
 
-    @bot.tree.command(name="help_requests", description="查看当前待处理外部求助")
+    @bot.tree.command(name="darwin_help_requests", description="查看当前待处理外部求助")
     async def cmd_help_requests(interaction: discord.Interaction):
         if not await ensure_allowed(interaction):
             return
@@ -746,7 +793,7 @@ def register_discord_commands(bot, channel, agent_id: str) -> None:
             ephemeral=True,
         )
 
-    @bot.tree.command(name="help_request", description="查看某条外部求助详情")
+    @bot.tree.command(name="darwin_help_request", description="查看某条外部求助详情")
     @app_commands.describe(request_id="求助 ID")
     async def cmd_help_request(interaction: discord.Interaction, request_id: str):
         if not await ensure_allowed(interaction):
@@ -756,3 +803,53 @@ def register_discord_commands(bot, channel, agent_id: str) -> None:
             embed=discord.Embed.from_dict(help_request_embed(bundle)),
             ephemeral=True,
         )
+
+    @bot.tree.command(name="darwin_model", description="查看或切换 DarwinApex 模型")
+    @app_commands.describe(action="'list' 查看当前模型，或传入模型名切换")
+    async def cmd_darwin_model(interaction: discord.Interaction, action: str = "list"):
+        if not await ensure_allowed(interaction):
+            return
+        settings = load_settings()
+        store = DarwinApexStore(settings)
+        action = action.strip()
+        if action == "list":
+            await interaction.response.send_message(
+                embed=discord.Embed.from_dict(
+                    model_embed(
+                        current_model=store.current_model(),
+                        allowed_models=settings.allowed_models,
+                        current_depth=store.current_depth(),
+                        allowed_reasoning=settings.allowed_reasoning,
+                    )
+                ),
+                ephemeral=True,
+            )
+            return
+        if not channel._is_owner(interaction.user.id, agent_id, "discord"):
+            await interaction.response.send_message("⛔ Owner permission required.", ephemeral=True)
+            return
+        if action not in settings.allowed_models:
+            await interaction.response.send_message(
+                f"⛔ Model not allowed. Allowed: {', '.join(settings.allowed_models)}",
+                ephemeral=True,
+            )
+            return
+        store.set_model(action, str(interaction.user.id))
+        await interaction.response.send_message(f"模型已切到 `{action}`。", ephemeral=True)
+
+    for depth in load_settings().allowed_reasoning:
+        async def _set_depth(interaction: discord.Interaction, *, depth_value: str = depth):
+            if not await ensure_allowed(interaction):
+                return
+            if not channel._is_owner(interaction.user.id, agent_id, "discord"):
+                await interaction.response.send_message("⛔ Owner permission required.", ephemeral=True)
+                return
+            settings = load_settings()
+            store = DarwinApexStore(settings)
+            store.set_depth(depth_value, str(interaction.user.id))
+            await interaction.response.send_message(f"思考深度已切到 `{depth_value}`。", ephemeral=True)
+
+        bot.tree.command(
+            name=f"darwin_mode_{depth}",
+            description=f"切换 DarwinApex 思考深度到 {depth}",
+        )(_set_depth)
