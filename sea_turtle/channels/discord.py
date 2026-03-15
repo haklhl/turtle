@@ -462,6 +462,15 @@ class DiscordChannel(BaseChannel):
         except Exception as e:
             logger.error(f"Failed to send Discord message to {chat_id}: {e}")
 
+    async def stop(self) -> None:
+        """Stop all Discord bots."""
+        for agent_id, bot in self.bots.items():
+            try:
+                await bot.close()
+                logger.info(f"Discord bot stopped for agent '{agent_id}'")
+            except Exception as e:
+                logger.error(f"Error stopping Discord bot for '{agent_id}': {e}")
+
 
 def _build_discord_poll(spec: dict[str, Any]) -> discord.Poll:
     question = str(spec.get("question") or "").strip()
@@ -490,12 +499,3 @@ def _build_discord_poll(spec: dict[str, Any]) -> discord.Poll:
     if len(poll.answers) < 2:
         raise ValueError("Discord poll requires at least two valid answers")
     return poll
-
-    async def stop(self) -> None:
-        """Stop all Discord bots."""
-        for agent_id, bot in self.bots.items():
-            try:
-                await bot.close()
-                logger.info(f"Discord bot stopped for agent '{agent_id}'")
-            except Exception as e:
-                logger.error(f"Error stopping Discord bot for '{agent_id}': {e}")
