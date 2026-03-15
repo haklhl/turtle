@@ -134,6 +134,10 @@ class DiscordChannel(BaseChannel):
         @bot.event
         async def on_ready():
             logger.info(f"Discord bot for agent '{agent_id}' connected as {bot.user} (ID: {bot.user.id})")
+            try:
+                await bot.change_presence(status=discord.Status.online)
+            except Exception as e:
+                logger.warning(f"Failed to set Discord presence for '{agent_id}': {e}")
             # Sync slash commands
             try:
                 synced = await bot.tree.sync()
