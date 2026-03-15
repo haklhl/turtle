@@ -936,6 +936,7 @@ class AgentWorker:
         user_id: Any = None,
         guild_id: Any = None,
         attachments: list[str] | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> str:
         """Process a user message through the LLM with tool calling loop."""
         if not self.llm:
@@ -961,6 +962,7 @@ class AgentWorker:
             memory_content=memory_content,
             rules_content=rules_content,
             channel_name=source,
+            discord_context=metadata if source == "discord" else None,
         )
         context.set_system_prompt(system_prompt)
         attachments = attachments or []
@@ -983,6 +985,7 @@ class AgentWorker:
             "chat_id": chat_id,
             "user_id": user_id,
             "guild_id": guild_id,
+            "metadata": metadata or {},
         }
         tools = self._get_tools(source)
         max_tool_rounds = 10
@@ -1002,6 +1005,7 @@ class AgentWorker:
                         "chat_id": chat_id,
                         "user_id": user_id,
                         "guild_id": guild_id,
+                        "channel_metadata": metadata or {},
                         "image_paths": image_attachments,
                     },
                 )
@@ -1107,6 +1111,7 @@ class AgentWorker:
                 user_id=msg.get("user_id"),
                 guild_id=msg.get("guild_id"),
                 attachments=msg.get("attachments", []),
+                metadata=msg.get("metadata", {}),
             )
             elapsed_ms = int((time.monotonic() - started_at) * 1000)
             self._request_count += 1

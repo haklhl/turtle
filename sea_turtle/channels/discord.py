@@ -156,6 +156,17 @@ class DiscordChannel(BaseChannel):
             user_id = message.author.id
             chat_id = message.channel.id
             guild_id = message.guild.id if message.guild else 0
+            guild_name = message.guild.name if message.guild else None
+            channel_name = getattr(message.channel, "name", None)
+            is_thread = isinstance(message.channel, discord.Thread)
+            thread_name = message.channel.name if is_thread else None
+            thread_parent = message.channel.parent if is_thread else None
+            thread_parent_id = thread_parent.id if thread_parent else None
+            thread_parent_name = getattr(thread_parent, "name", None) if thread_parent else None
+            thread_parent_type = str(thread_parent.type) if thread_parent else None
+            channel_topic = getattr(message.channel, "topic", None)
+            if is_thread and thread_parent is not None:
+                channel_topic = getattr(thread_parent, "topic", None)
             logger.debug(f"user_id={user_id}, chat_id={chat_id}, guild_id={guild_id}")
 
             if isinstance(message.channel, discord.DMChannel):
@@ -223,6 +234,16 @@ class DiscordChannel(BaseChannel):
                     chat_id=chat_id,
                     user_id=user_id,
                     guild_id=guild_id,
+                    metadata={
+                        "guild_name": guild_name,
+                        "channel_name": channel_name,
+                        "channel_topic": channel_topic,
+                        "is_thread": is_thread,
+                        "thread_name": thread_name,
+                        "thread_parent_id": thread_parent_id,
+                        "thread_parent_name": thread_parent_name,
+                        "thread_parent_type": thread_parent_type,
+                    },
                 )
                 if not success:
                     await message.channel.send("⚠️ Agent is not available.")

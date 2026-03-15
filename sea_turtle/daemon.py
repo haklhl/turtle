@@ -626,6 +626,7 @@ class Daemon:
         user_id: Any = None,
         guild_id: Any = None,
         attachments: list[str] | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> bool:
         """Route an incoming message to the appropriate handler.
 
@@ -697,6 +698,7 @@ class Daemon:
             "user_id": user_id,
             "guild_id": guild_id,
             "attachments": attachments or [],
+            "metadata": metadata or {},
         })
 
     async def _handle_and_reply_command(self, command, agent_id, source, chat_id, user_id):
