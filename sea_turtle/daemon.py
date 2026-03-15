@@ -46,7 +46,13 @@ from sea_turtle.core.tasks import (
     mark_schedule_failed,
     mark_schedules_started,
 )
-from sea_turtle.llm.registry import list_models, format_model_list, get_model_info, resolve_provider
+from sea_turtle.llm.registry import (
+    format_model_list,
+    get_display_model_name,
+    get_model_info,
+    list_models,
+    resolve_provider,
+)
 from sea_turtle.security.system_prompt import build_system_prompt
 from sea_turtle.utils.logger import get_daemon_logger
 
@@ -384,9 +390,10 @@ class Daemon:
                             or self.config.get("llm", {}).get("providers", {}).get("codex", {}).get("reasoning_effort", "medium")
                         )
                         effort_line = f"\n  Reasoning Effort: {effort}"
+                    display_model = get_display_model_name(str(data.get("model", "?")))
                     return (
                         f"📊 Context Stats:\n"
-                        f"  Model: {data.get('model', '?')}\n"
+                        f"  Model: {display_model}\n"
                         f"  Provider: {provider}{effort_line}\n"
                         f"  Messages: {ctx.get('message_count', 0)}\n"
                         f"  Requests: {ctx.get('request_count', 0)}\n"
@@ -537,11 +544,12 @@ class Daemon:
                     finally:
                         if req_id:
                             self._pending_requests.pop(req_id, None)
+                display_model = get_display_model_name(str(agent_cfg.get("model", "?")))
                 return (
                     f"🐢 Agent: {agent_id}\n"
                     f"  Status: {status}\n"
                     f"  Name: {agent_cfg.get('name', 'Turtle')}\n"
-                    f"  Model: {agent_cfg.get('model', '?')} ({provider})\n"
+                    f"  Model: {display_model} ({provider})\n"
                     f"  Sandbox: {agent_cfg.get('sandbox', 'confined')}\n"
                     f"  Workspace: {workspace}"
                     f"\n  Heartbeat: {'enabled' if heartbeat.get('enabled') else 'disabled'}"

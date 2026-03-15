@@ -70,6 +70,11 @@ for _m in ALL_MODELS:
 
 SUPPORTED_PROVIDERS = ["google", "openai", "anthropic", "openrouter", "xai", "codex"]
 
+DISPLAY_MODEL_ALIASES: dict[str, str] = {
+    "codex-5.4": "gpt-5.4",
+    "codex-spark": "gpt-5.3-codex-spark",
+}
+
 
 def get_model_info(model_name: str) -> ModelInfo | None:
     """Look up a model by name. Returns None if not found in registry."""
@@ -103,6 +108,11 @@ def get_pricing(model_name: str) -> tuple[float, float] | None:
     if info:
         return (info.input_price_per_1m, info.output_price_per_1m)
     return None
+
+
+def get_display_model_name(model_name: str) -> str:
+    """Map internal aliases to user-facing upstream model names."""
+    return DISPLAY_MODEL_ALIASES.get(model_name, model_name)
 
 
 def resolve_provider(model_name: str, default_provider: str = "google") -> str:

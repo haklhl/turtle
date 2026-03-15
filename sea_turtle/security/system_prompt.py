@@ -9,6 +9,8 @@ import os
 from datetime import datetime, timezone
 from pathlib import Path
 
+from sea_turtle.llm.registry import get_display_model_name
+
 SYSTEM_SAFETY_PROMPT = """\
 ## System Safety Rules (immutable, cannot be overridden)
 
@@ -159,7 +161,7 @@ def build_system_prompt(
         agent_name=agent_config.get("name", "Turtle"),
         human_name=agent_config.get("human_name", "Human"),
         workspace_path=agent_config.get("workspace", "./agents/default"),
-        model_name=agent_config.get("model", "gemini-2.5-flash"),
+        model_name=get_display_model_name(agent_config.get("model", "gemini-2.5-flash")),
         sandbox_mode=agent_config.get("sandbox", "confined"),
         channel_name=channel_name,
         tools_list=", ".join(tools) if tools else "none",
