@@ -3,6 +3,7 @@
 import asyncio
 import datetime
 import logging
+import re
 from pathlib import Path
 from typing import Any, TYPE_CHECKING
 
@@ -28,6 +29,18 @@ AGENT_DISCORD_COMMAND_REGISTRARS = {
 
 # Sensitive commands that require owner permission
 SENSITIVE_COMMANDS = {"/restart", "/reset", "/model", "/agent", "/prompt"}
+
+SYS_COMMAND_TITLES = {
+    "/start": "欢迎",
+    "/help": "系统命令",
+    "/context": "上下文统计",
+    "/prompt": "最终系统提示词",
+    "/usage": "Token 用量",
+    "/status": "Agent 状态",
+    "/reset": "上下文重置",
+    "/restart": "Agent 重启",
+    "/model": "模型设置",
+}
 
 
 class DiscordChannel(BaseChannel):
@@ -257,84 +270,76 @@ class DiscordChannel(BaseChannel):
         # Register slash commands
         @bot.tree.command(name="sys_start", description="Start the bot and show welcome message")
         async def cmd_start(interaction: discord.Interaction):
-            reply = await channel.daemon.handle_system_command(
-                command="/start", agent_id=agent_id, source="discord",
-                chat_id=interaction.channel_id, user_id=interaction.user.id,
-                guild_id=interaction.guild_id,
+            await channel._respond_system_slash(
+                interaction,
+                agent_id=agent_id,
+                command="/start",
             )
-            await interaction.response.send_message(reply, ephemeral=True)
 
         @bot.tree.command(name="sys_help", description="Show available commands")
         async def cmd_help(interaction: discord.Interaction):
-            reply = await channel.daemon.handle_system_command(
-                command="/help", agent_id=agent_id, source="discord",
-                chat_id=interaction.channel_id, user_id=interaction.user.id,
-                guild_id=interaction.guild_id,
+            await channel._respond_system_slash(
+                interaction,
+                agent_id=agent_id,
+                command="/help",
             )
-            await interaction.response.send_message(reply, ephemeral=True)
 
         @bot.tree.command(name="sys_context", description="Show context statistics")
         async def cmd_context(interaction: discord.Interaction):
-            reply = await channel.daemon.handle_system_command(
-                command="/context", agent_id=agent_id, source="discord",
-                chat_id=interaction.channel_id, user_id=interaction.user.id,
-                guild_id=interaction.guild_id,
+            await channel._respond_system_slash(
+                interaction,
+                agent_id=agent_id,
+                command="/context",
             )
-            await interaction.response.send_message(reply, ephemeral=True)
 
         @bot.tree.command(name="sys_prompt", description="Show current final system prompt (owner only)")
         async def cmd_prompt(interaction: discord.Interaction):
             if not channel._is_owner(interaction.user.id, agent_id, "discord"):
                 await interaction.response.send_message("⛔ Owner permission required.", ephemeral=True)
                 return
-            reply = await channel.daemon.handle_system_command(
-                command="/prompt", agent_id=agent_id, source="discord",
-                chat_id=interaction.channel_id, user_id=interaction.user.id,
-                guild_id=interaction.guild_id,
+            await channel._respond_system_slash(
+                interaction,
+                agent_id=agent_id,
+                command="/prompt",
             )
-            await interaction.response.send_message(reply, ephemeral=True)
 
         @bot.tree.command(name="sys_usage", description="Show token usage and costs")
         async def cmd_usage(interaction: discord.Interaction):
-            reply = await channel.daemon.handle_system_command(
-                command="/usage", agent_id=agent_id, source="discord",
-                chat_id=interaction.channel_id, user_id=interaction.user.id,
-                guild_id=interaction.guild_id,
+            await channel._respond_system_slash(
+                interaction,
+                agent_id=agent_id,
+                command="/usage",
             )
-            await interaction.response.send_message(reply, ephemeral=True)
 
         @bot.tree.command(name="sys_status", description="Show agent status")
         async def cmd_status(interaction: discord.Interaction):
-            reply = await channel.daemon.handle_system_command(
-                command="/status", agent_id=agent_id, source="discord",
-                chat_id=interaction.channel_id, user_id=interaction.user.id,
-                guild_id=interaction.guild_id,
+            await channel._respond_system_slash(
+                interaction,
+                agent_id=agent_id,
+                command="/status",
             )
-            await interaction.response.send_message(reply, ephemeral=True)
 
         @bot.tree.command(name="sys_reset", description="Reset conversation context (owner only)")
         async def cmd_reset(interaction: discord.Interaction):
             if not channel._is_owner(interaction.user.id, agent_id, "discord"):
                 await interaction.response.send_message("⛔ Owner permission required.", ephemeral=True)
                 return
-            reply = await channel.daemon.handle_system_command(
-                command="/reset", agent_id=agent_id, source="discord",
-                chat_id=interaction.channel_id, user_id=interaction.user.id,
-                guild_id=interaction.guild_id,
+            await channel._respond_system_slash(
+                interaction,
+                agent_id=agent_id,
+                command="/reset",
             )
-            await interaction.response.send_message(reply, ephemeral=True)
 
         @bot.tree.command(name="sys_restart", description="Restart agent process (owner only)")
         async def cmd_restart(interaction: discord.Interaction):
             if not channel._is_owner(interaction.user.id, agent_id, "discord"):
                 await interaction.response.send_message("⛔ Owner permission required.", ephemeral=True)
                 return
-            reply = await channel.daemon.handle_system_command(
-                command="/restart", agent_id=agent_id, source="discord",
-                chat_id=interaction.channel_id, user_id=interaction.user.id,
-                guild_id=interaction.guild_id,
+            await channel._respond_system_slash(
+                interaction,
+                agent_id=agent_id,
+                command="/restart",
             )
-            await interaction.response.send_message(reply, ephemeral=True)
 
         @bot.tree.command(name="sys_model", description="List or switch models (owner only)")
         @app_commands.describe(action="'list' to show models, or model name to switch")
@@ -342,12 +347,11 @@ class DiscordChannel(BaseChannel):
             if action != "list" and not channel._is_owner(interaction.user.id, agent_id, "discord"):
                 await interaction.response.send_message("⛔ Owner permission required to switch models.", ephemeral=True)
                 return
-            reply = await channel.daemon.handle_system_command(
-                command=f"/model {action}", agent_id=agent_id, source="discord",
-                chat_id=interaction.channel_id, user_id=interaction.user.id,
-                guild_id=interaction.guild_id,
+            await channel._respond_system_slash(
+                interaction,
+                agent_id=agent_id,
+                command=f"/model {action}",
             )
-            await interaction.response.send_message(reply, ephemeral=True)
 
         registrar = AGENT_DISCORD_COMMAND_REGISTRARS.get(agent_id)
         if registrar:
@@ -436,6 +440,29 @@ class DiscordChannel(BaseChannel):
         except Exception as e:
             logger.error(f"Failed to send Discord message: {e}")
 
+    async def _respond_system_slash(
+        self,
+        interaction: discord.Interaction,
+        *,
+        agent_id: str,
+        command: str,
+    ) -> None:
+        reply = await self.daemon.handle_system_command(
+            command=command,
+            agent_id=agent_id,
+            source="discord",
+            chat_id=interaction.channel_id,
+            user_id=interaction.user.id,
+            guild_id=interaction.guild_id,
+        )
+        text, embed, files = _build_system_command_response(command, reply)
+        kwargs: dict[str, Any] = {"ephemeral": True}
+        if embed is not None:
+            kwargs["embed"] = embed
+        if files:
+            kwargs["files"] = files
+        await interaction.response.send_message(text or None, **kwargs)
+
     async def send_message(
         self,
         chat_id: Any,
@@ -510,3 +537,150 @@ def _build_discord_poll(spec: dict[str, Any]) -> discord.Poll:
     if len(poll.answers) < 2:
         raise ValueError("Discord poll requires at least two valid answers")
     return poll
+
+
+def _build_system_command_response(command: str, reply: str) -> tuple[str, discord.Embed | None, list[discord.File]]:
+    cleaned, attachment_paths = _extract_attachment_paths(reply)
+    files = [discord.File(str(path), filename=path.name) for path in attachment_paths[:10]]
+    embed = _build_system_command_embed(command, cleaned)
+    if embed is not None:
+        return "", embed, files
+    return cleaned, None, files
+
+
+def _extract_attachment_paths(reply: str) -> tuple[str, list[Path]]:
+    body_lines: list[str] = []
+    paths: list[Path] = []
+    for raw_line in reply.splitlines():
+        line = raw_line.rstrip()
+        if line.startswith("ATTACH:"):
+            candidate = line.split(":", 1)[1].strip()
+            if candidate:
+                path = Path(candidate).expanduser()
+                if path.exists() and path.is_file():
+                    paths.append(path)
+            continue
+        body_lines.append(raw_line)
+    return "\n".join(body_lines).strip(), paths
+
+
+def _build_system_command_embed(command: str, reply: str) -> discord.Embed | None:
+    command_name = command.split()[0].lower()
+    title = SYS_COMMAND_TITLES.get(command_name)
+    if not title or not reply.strip():
+        return None
+
+    if command_name == "/help":
+        return _build_help_embed(title, reply)
+    if command_name in {"/status", "/context"}:
+        return _build_key_value_embed(title, reply)
+    if command_name == "/usage":
+        return _build_usage_embed(title, reply)
+    if command_name == "/model":
+        return _build_model_embed(title, reply)
+    if command_name in {"/start", "/prompt", "/reset", "/restart"}:
+        return _build_simple_embed(title, reply)
+    return _build_simple_embed(title, reply)
+
+
+def _build_simple_embed(title: str, reply: str, color: int = 0x3498DB) -> discord.Embed:
+    embed = discord.Embed(title=title, description=_clamp_text(reply, 4096), color=color)
+    return embed
+
+
+def _build_help_embed(title: str, reply: str) -> discord.Embed:
+    lines = [line.strip() for line in reply.splitlines() if line.strip()]
+    embed = discord.Embed(title=title, color=0x3498DB)
+    description_lines: list[str] = []
+    for line in lines:
+        if line.startswith("/"):
+            command, _, detail = line.partition("—")
+            embed.add_field(
+                name=command.strip(),
+                value=_clamp_text((detail or "").strip() or "No description.", 1024),
+                inline=False,
+            )
+        else:
+            description_lines.append(line)
+    if description_lines:
+        embed.description = _clamp_text("\n".join(description_lines), 4096)
+    return embed
+
+
+def _build_key_value_embed(title: str, reply: str) -> discord.Embed:
+    lines = [line.rstrip() for line in reply.splitlines() if line.strip()]
+    heading = lines[0] if lines else title
+    color = 0x2ECC71 if "🟢" in reply else 0x3498DB
+    embed = discord.Embed(title=title, description=_strip_leading_emoji(heading), color=color)
+    for line in lines[1:]:
+        stripped = line.strip()
+        if ":" not in stripped:
+            embed.add_field(name="Note", value=_clamp_text(stripped, 1024), inline=False)
+            continue
+        key, value = stripped.split(":", 1)
+        embed.add_field(
+            name=_strip_bullet(key).strip()[:256] or "Value",
+            value=_clamp_text(value.strip() or "n/a", 1024),
+            inline=False,
+        )
+    return embed
+
+
+def _build_usage_embed(title: str, reply: str) -> discord.Embed:
+    lines = [line.strip() for line in reply.splitlines() if line.strip()]
+    embed = discord.Embed(title=title, color=0x9B59B6)
+    description_lines: list[str] = []
+    for line in lines:
+        if ":" not in line:
+            description_lines.append(line)
+            continue
+        key, value = line.split(":", 1)
+        embed.add_field(
+            name=_strip_bullet(key).strip()[:256] or "Metric",
+            value=_clamp_text(value.strip() or "n/a", 1024),
+            inline=False,
+        )
+    if description_lines:
+        embed.description = _clamp_text("\n".join(description_lines), 4096)
+    return embed
+
+
+def _build_model_embed(title: str, reply: str) -> discord.Embed:
+    color = 0x34495E
+    lowered = reply.lower()
+    if lowered.startswith("✅"):
+        color = 0x2ECC71
+    elif lowered.startswith("⚠️") or lowered.startswith("usage:"):
+        color = 0xE67E22
+    embed = discord.Embed(title=title, color=color)
+    if "📦 " in reply:
+        chunks = []
+        current_chunk = ""
+        for line in reply.splitlines():
+            candidate = f"{current_chunk}\n{line}".strip() if current_chunk else line
+            if len(candidate) > 1000:
+                chunks.append(current_chunk)
+                current_chunk = line
+            else:
+                current_chunk = candidate
+        if current_chunk:
+            chunks.append(current_chunk)
+        for index, chunk in enumerate(chunks[:6], start=1):
+            embed.add_field(name=f"Available Models {index}", value=f"```text\n{chunk[:1000]}\n```", inline=False)
+    else:
+        embed.description = _clamp_text(reply, 4096)
+    return embed
+
+
+def _strip_leading_emoji(text: str) -> str:
+    return re.sub(r"^[^\w/]+", "", text).strip()
+
+
+def _strip_bullet(text: str) -> str:
+    return text.lstrip("- ").strip()
+
+
+def _clamp_text(text: str, limit: int) -> str:
+    if len(text) <= limit:
+        return text
+    return text[: max(0, limit - 1)] + "…"
