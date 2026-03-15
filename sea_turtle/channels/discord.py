@@ -16,6 +16,7 @@ from sea_turtle.channels.discord_components import (
     DiscordInteractionRuntime,
     normalize_components_payload,
 )
+from sea_turtle.integrations import darwin_apex
 
 if TYPE_CHECKING:
     from sea_turtle.daemon import Daemon
@@ -344,6 +345,61 @@ class DiscordChannel(BaseChannel):
                 guild_id=interaction.guild_id,
             )
             await interaction.response.send_message(reply, ephemeral=True)
+
+        if agent_id == "kakuzu":
+            @bot.tree.command(name="apex_status", description="查看 DarwinApex 与 MemeHarpoon 状态")
+            async def cmd_apex_status(interaction: discord.Interaction):
+                await channel._handle_kakuzu_command(interaction, command_name="apex_status")
+
+            @bot.tree.command(name="roadmap", description="查看 DarwinApex 长期路线图")
+            async def cmd_roadmap(interaction: discord.Interaction):
+                await channel._handle_kakuzu_command(interaction, command_name="roadmap")
+
+            @bot.tree.command(name="goals", description="查看 DarwinApex 长期目标")
+            async def cmd_goals(interaction: discord.Interaction):
+                await channel._handle_kakuzu_command(interaction, command_name="goals")
+
+            @bot.tree.command(name="last_iter", description="查看最近一轮 DarwinApex 迭代")
+            async def cmd_last_iter(interaction: discord.Interaction):
+                await channel._handle_kakuzu_command(interaction, command_name="last_iter")
+
+    async def _handle_kakuzu_command(self, interaction: discord.Interaction, *, command_name: str) -> None:
+        agent_id = "kakuzu"
+        if not self._is_user_allowed(interaction.user.id, agent_id, "discord"):
+            await interaction.response.send_message("⛔ Unauthorized.", ephemeral=True)
+            return
+        try:
+            if command_name == "apex_status":
+                bundle = await darwin_apex.fetch_status_bundle()
+                await interaction.response.send_message(
+                    embed=discord.Embed.from_dict(darwin_apex.status_embed(bundle)),
+                    ephemeral=True,
+                )
+                return
+            if command_name == "roadmap":
+                bundle = darwin_apex.load_roadmap_bundle()
+                await interaction.response.send_message(
+                    embed=discord.Embed.from_dict(darwin_apex.roadmap_embed(bundle)),
+                    ephemeral=True,
+                )
+                return
+            if command_name == "goals":
+                bundle = darwin_apex.load_goals_bundle()
+                embeds = [discord.Embed.from_dict(item) for item in darwin_apex.goals_embeds(bundle)]
+                await interaction.response.send_message(embeds=embeds[:10], ephemeral=True)
+                return
+            if command_name == "last_iter":
+                bundle = darwin_apex.load_last_iter_bundle()
+                embeds = [discord.Embed.from_dict(item) for item in darwin_apex.last_iter_embeds(bundle)]
+                await interaction.response.send_message(embeds=embeds[:10], ephemeral=True)
+                return
+            await interaction.response.send_message("Unsupported command.", ephemeral=True)
+        except Exception as e:
+            logger.error(f"Failed to handle Kakuzu Discord command {command_name}: {e}", exc_info=True)
+            if interaction.response.is_done():
+                await interaction.followup.send(f"⚠️ {command_name} failed: {e}", ephemeral=True)
+            else:
+                await interaction.response.send_message(f"⚠️ {command_name} failed: {e}", ephemeral=True)
 
     async def _send_discord_message(
         self,
