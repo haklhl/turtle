@@ -64,6 +64,9 @@ class DiscordInteractionRuntime:
         action: dict[str, Any] | None,
         event_data: dict[str, Any] | None = None,
     ) -> None:
+        if not self.channel_manager._is_owner(interaction.user.id, self.agent_id, "discord"):
+            await self._send_interaction_message(interaction, "⛔ Owner permission required.", ephemeral=True)
+            return
         event_data = event_data or {}
         action = action or {"type": "route_message"}
         action_type = str(action.get("type") or "route_message").strip().lower()

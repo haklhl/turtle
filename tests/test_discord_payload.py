@@ -1,4 +1,5 @@
 import unittest
+from types import SimpleNamespace
 
 from sea_turtle.daemon import Daemon
 from sea_turtle.channels.discord_components import (
@@ -120,9 +121,40 @@ class DiscordPayloadTests(unittest.TestCase):
         self.assertEqual(len(view.children), 1)
         self.assertEqual(view.children[0].__class__.__name__, "ActionRow")
 
+
+class DiscordInteractionPermissionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_interaction_requires_owner(self):
+        runtime = DiscordInteractionRuntime(
+            channel_manager=_DummyChannelManager(owner=False),
+            agent_id="default",
+            channel_id=123,
+        )
+        sent = {}
+
+        async def send_message(content, ephemeral=True):
+            sent["content"] = content
+            sent["ephemeral"] = ephemeral
+
+        interaction = SimpleNamespace(
+            user=SimpleNamespace(id=1, display_name="guest"),
+            channel_id=123,
+            guild_id=456,
+            response=SimpleNamespace(is_done=lambda: False, send_message=send_message),
+            followup=SimpleNamespace(send=send_message),
+        )
+
+        await runtime.handle_action(interaction, {"type": "respond", "content": "ok"})
+        self.assertEqual(sent["content"], "⛔ Owner permission required.")
+        self.assertTrue(sent["ephemeral"])
+
+
 class _DummyChannelManager:
-    def __init__(self):
+    def __init__(self, *, owner: bool = True):
         self.daemon = _DummyDaemon()
+        self._owner = owner
+
+    def _is_owner(self, user_id, agent_id, channel_type):
+        return self._owner
 
 
 class _DummyDaemon:
