@@ -1,6 +1,7 @@
 """Discord Bot channel implementation."""
 
 import asyncio
+import datetime
 import logging
 from pathlib import Path
 from typing import Any, TYPE_CHECKING
@@ -234,6 +235,7 @@ class DiscordChannel(BaseChannel):
                     chat_id=chat_id,
                     user_id=user_id,
                     guild_id=guild_id,
+                    message_id=message.id,
                     metadata={
                         "guild_name": guild_name,
                         "channel_name": channel_name,
@@ -351,7 +353,10 @@ class DiscordChannel(BaseChannel):
         embed: dict | None = None,
         embeds: list[dict] | None = None,
         components: dict | list[dict] | None = None,
+        poll: dict | None = None,
         attachments: list[str] | None = None,
+        react_to_message_id: Any = None,
+        reactions: list[str] | None = None,
     ) -> None:
         """Send a message to a Discord channel, optionally with embeds/files."""
         try:
@@ -360,6 +365,9 @@ class DiscordChannel(BaseChannel):
             embed_objs = [discord.Embed.from_dict(item) for item in embeds or [] if isinstance(item, dict)]
             if not embed_objs and embed:
                 embed_objs = [discord.Embed.from_dict(embed)]
+            poll_obj = None
+            if isinstance(poll, dict):
+                poll_obj = _build_discord_poll(poll)
             if components and agent_id:
                 normalized_components = normalize_components_payload(components, text)
                 runtime = DiscordInteractionRuntime(self, agent_id, channel.id)
@@ -368,6 +376,9 @@ class DiscordChannel(BaseChannel):
                 if embed_objs:
                     logger.warning("Ignoring Discord embeds because Components V2 payload is present.")
                     embed_objs = []
+                if poll_obj:
+                    logger.warning("Ignoring Discord poll because Components V2 payload is present.")
+                    poll_obj = None
             file_paths = [Path(item).expanduser() for item in attachments or [] if str(item).strip()]
             file_paths = [path for path in file_paths if path.exists() and path.is_file()]
             if len(message_text) <= 2000:
@@ -379,11 +390,13 @@ class DiscordChannel(BaseChannel):
                         kwargs["embeds"] = embed_objs[:10]
                 if view:
                     kwargs["view"] = view
+                if poll_obj:
+                    kwargs["poll"] = poll_obj
                 if file_paths:
                     kwargs["files"] = [discord.File(str(path), filename=path.name) for path in file_paths[:10]]
                 if message_text:
                     await channel.send(message_text, **kwargs)
-                elif embed_objs or file_paths or view:
+                elif embed_objs or file_paths or view or poll_obj:
                     await channel.send(**kwargs)
             else:
                 for i in range(0, len(message_text), 2000):
@@ -396,10 +409,19 @@ class DiscordChannel(BaseChannel):
                             kwargs["embeds"] = embed_objs[:10]
                     if view and i == 0:
                         kwargs["view"] = view
+                    if poll_obj and i == 0:
+                        kwargs["poll"] = poll_obj
                     if file_paths and i == 0:
                         kwargs["files"] = [discord.File(str(path), filename=path.name) for path in file_paths[:10]]
                     await channel.send(chunk, **kwargs)
                     await asyncio.sleep(0.3)
+            if react_to_message_id and reactions:
+                target = channel.get_partial_message(int(react_to_message_id))
+                for emoji in reactions:
+                    try:
+                        await target.add_reaction(emoji)
+                    except Exception as e:
+                        logger.warning(f"Failed to add Discord reaction {emoji!r}: {e}")
         except Exception as e:
             logger.error(f"Failed to send Discord message: {e}")
 
@@ -411,7 +433,10 @@ class DiscordChannel(BaseChannel):
         embed: dict | None = None,
         embeds: list[dict] | None = None,
         components: dict | list[dict] | None = None,
+        poll: dict | None = None,
         attachments: list[str] | None = None,
+        react_to_message_id: Any = None,
+        reactions: list[str] | None = None,
     ) -> None:
         """Send a message to a Discord channel by ID."""
         if not agent_id or agent_id not in self.bots:
@@ -429,10 +454,42 @@ class DiscordChannel(BaseChannel):
                     embed=embed,
                     embeds=embeds,
                     components=components,
+                    poll=poll,
                     attachments=attachments,
+                    react_to_message_id=react_to_message_id,
+                    reactions=reactions,
                 )
         except Exception as e:
             logger.error(f"Failed to send Discord message to {chat_id}: {e}")
+
+
+def _build_discord_poll(spec: dict[str, Any]) -> discord.Poll:
+    question = str(spec.get("question") or "").strip()
+    answers = spec.get("answers")
+    if not question or not isinstance(answers, list) or len(answers) < 2:
+        raise ValueError("Discord poll requires question and at least two answers")
+    duration_hours_raw = spec.get("duration_hours", 24)
+    try:
+        duration_hours = max(1, min(168, int(duration_hours_raw)))
+    except Exception:
+        duration_hours = 24
+    poll = discord.Poll(
+        question=question,
+        duration=datetime.timedelta(hours=duration_hours),
+        multiple=bool(spec.get("multiple", False)),
+    )
+    for item in answers[:10]:
+        if isinstance(item, dict):
+            text = str(item.get("text") or "").strip()
+            emoji = item.get("emoji")
+        else:
+            text = str(item).strip()
+            emoji = None
+        if text:
+            poll.add_answer(text=text, emoji=emoji)
+    if len(poll.answers) < 2:
+        raise ValueError("Discord poll requires at least two valid answers")
+    return poll
 
     async def stop(self) -> None:
         """Stop all Discord bots."""

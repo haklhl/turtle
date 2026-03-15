@@ -1126,6 +1126,7 @@ class AgentWorker:
                 "source": source,
                 "chat_id": msg.get("chat_id"),
                 "user_id": msg.get("user_id"),
+                "message_id": msg.get("message_id"),
                 "elapsed_ms": elapsed_ms,
             }
 
@@ -1152,6 +1153,7 @@ class AgentWorker:
                 "source": source,
                 "chat_id": msg.get("chat_id"),
                 "user_id": msg.get("user_id"),
+                "message_id": msg.get("message_id"),
                 "elapsed_ms": elapsed_ms,
             })
 

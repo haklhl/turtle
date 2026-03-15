@@ -93,3 +93,35 @@
     - 如果既要说明文字又要组件，优先用 `text_display`
     - 顶层交互组件优先包进 `container`，不要把一串 `button/select` 裸放在最外层
     - Modal 不能直接发送，只能通过按钮或选择器的 `open_modal` action 打开
+
+## Discord Reactions
+
+- 如果只是想对当前触发你的那条 Discord 消息做一个轻量回应，可以在最终回复里附加 `DISCORD_REACTION:`。
+- 常用形式：
+  - `DISCORD_REACTION: 👍`
+  - `DISCORD_REACTION: ["👍","👀"]`
+- `DISCORD_REACTION` 会把表情加到“当前这条触发消息”上，而不是新发一条消息。
+- 适合：
+  - 轻量确认
+  - 快速同意 / 看到
+  - 不值得专门发一条新消息的场景
+- 如果已经有明确正文回复，也可以同时附带 reaction。
+
+## Discord Poll
+
+- 如果需要在 Discord 频道里发起多人投票，优先使用原生 poll，而不是自己拿按钮模拟。
+- 用法是在最终回复里附加 `DISCORD_POLL: {...}` 单行 JSON，或 `DISCORD_POLL_JSON:` 代码块。
+- 最小结构：
+  - `{"question":"你要哪个方案？","answers":["方案 A","方案 B"]}`
+- 常用字段：
+  - `question`
+  - `answers`
+    - 可以是字符串数组
+    - 也可以是对象数组：`{"text":"方案 A","emoji":"🔥"}`
+  - `duration_hours`
+    - 默认 24
+    - 建议 1 到 168 小时
+  - `multiple`
+    - `true` 表示允许多选
+- poll 至少要有 2 个选项。
+- poll 是原生 Discord 投票，不要和 Components V2 混成一条复杂交互面板。

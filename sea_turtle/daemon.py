@@ -627,6 +627,7 @@ class Daemon:
         guild_id: Any = None,
         attachments: list[str] | None = None,
         metadata: dict[str, Any] | None = None,
+        message_id: Any = None,
     ) -> bool:
         """Route an incoming message to the appropriate handler.
 
@@ -697,6 +698,7 @@ class Daemon:
             "chat_id": chat_id,
             "user_id": user_id,
             "guild_id": guild_id,
+            "message_id": message_id,
             "attachments": attachments or [],
             "metadata": metadata or {},
         })
@@ -873,7 +875,10 @@ class Daemon:
                 payload.get("discord_embed"),
                 payload.get("discord_embeds"),
                 payload.get("discord_components"),
+                payload.get("discord_poll"),
                 payload["attachments"],
+                msg.get("message_id"),
+                payload.get("discord_reactions"),
             )
         elif source == "heartbeat":
             logger.debug(f"Heartbeat result for '{agent_id}': {payload['text'][:200]}")
@@ -891,6 +896,8 @@ class Daemon:
         discord_embed = None
         discord_embeds = None
         discord_components = None
+        discord_poll = None
+        discord_reactions: list[str] = []
         lines = (content or "").splitlines()
         i = 0
         while i < len(lines):
@@ -973,6 +980,53 @@ class Daemon:
                     else:
                         if isinstance(parsed, (dict, list)):
                             discord_components = parsed
+            elif line.startswith("DISCORD_POLL:"):
+                raw = line.split(":", 1)[1].strip()
+                if raw and discord_poll is None:
+                    try:
+                        parsed = json.loads(raw)
+                    except json.JSONDecodeError:
+                        text_lines.append(line)
+                    else:
+                        if isinstance(parsed, dict):
+                            discord_poll = parsed
+            elif line.startswith("DISCORD_POLL_JSON:"):
+                block_lines: list[str] = []
+                i += 1
+                if i < len(lines) and lines[i].strip().startswith("```"):
+                    i += 1
+                    while i < len(lines) and lines[i].strip() != "```":
+                        block_lines.append(lines[i])
+                        i += 1
+                else:
+                    while i < len(lines) and lines[i].strip():
+                        block_lines.append(lines[i])
+                        i += 1
+                    i -= 1
+                if block_lines and discord_poll is None:
+                    raw = "\n".join(block_lines).strip()
+                    try:
+                        parsed = json.loads(raw)
+                    except json.JSONDecodeError:
+                        text_lines.append("DISCORD_POLL_JSON:")
+                        text_lines.extend(block_lines)
+                    else:
+                        if isinstance(parsed, dict):
+                            discord_poll = parsed
+            elif line.startswith("DISCORD_REACTION:"):
+                raw = line.split(":", 1)[1].strip()
+                if raw:
+                    try:
+                        parsed = json.loads(raw)
+                    except json.JSONDecodeError:
+                        discord_reactions.append(raw)
+                    else:
+                        if isinstance(parsed, str):
+                            discord_reactions.append(parsed)
+                        elif isinstance(parsed, list):
+                            discord_reactions.extend(
+                                str(item).strip() for item in parsed if str(item).strip()
+                            )
             else:
                 text_lines.append(line)
             i += 1
@@ -983,6 +1037,8 @@ class Daemon:
             "discord_embed": discord_embed,
             "discord_embeds": discord_embeds,
             "discord_components": discord_components,
+            "discord_poll": discord_poll,
+            "discord_reactions": discord_reactions,
         }
 
     async def _send_telegram_reply(
@@ -1030,7 +1086,10 @@ class Daemon:
         embed: dict | None = None,
         embeds: list[dict] | None = None,
         components: dict | list[dict] | None = None,
+        poll: dict | None = None,
         attachments: list[str] | None = None,
+        react_to_message_id: Any = None,
+        reactions: list[str] | None = None,
     ):
         """Send reply via Discord."""
         if self._discord_channel:
@@ -1041,7 +1100,10 @@ class Daemon:
                 embed=embed,
                 embeds=embeds,
                 components=components,
+                poll=poll,
                 attachments=attachments,
+                react_to_message_id=react_to_message_id,
+                reactions=reactions,
             )
         else:
             logger.warning(f"Discord channel not available, cannot send reply to {chat_id}")

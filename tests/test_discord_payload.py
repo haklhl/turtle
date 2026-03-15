@@ -7,6 +7,7 @@ from sea_turtle.channels.discord_components import (
     DiscordInteractionRuntime,
     normalize_components_payload,
 )
+from sea_turtle.channels.discord import _build_discord_poll
 
 
 class DiscordPayloadTests(unittest.TestCase):
@@ -46,6 +47,36 @@ class DiscordPayloadTests(unittest.TestCase):
         self.assertEqual(payload["text"], "hello")
         self.assertIsInstance(payload["discord_components"], dict)
         self.assertEqual(len(payload["discord_components"]["components"]), 2)
+
+    def test_parse_discord_poll(self):
+        payload = Daemon._parse_reply_payload(
+            'hello\nDISCORD_POLL: {"question":"Pick one","answers":["A","B"],"duration_hours":12}'
+        )
+        self.assertEqual(payload["text"], "hello")
+        self.assertEqual(
+            payload["discord_poll"],
+            {"question": "Pick one", "answers": ["A", "B"], "duration_hours": 12},
+        )
+
+    def test_parse_discord_reactions(self):
+        payload = Daemon._parse_reply_payload(
+            'done\nDISCORD_REACTION: ["👍","👀"]'
+        )
+        self.assertEqual(payload["text"], "done")
+        self.assertEqual(payload["discord_reactions"], ["👍", "👀"])
+
+    def test_build_discord_poll(self):
+        poll = _build_discord_poll(
+            {
+                "question": "Pick one",
+                "answers": ["A", {"text": "B", "emoji": "🔥"}],
+                "duration_hours": 6,
+                "multiple": True,
+            }
+        )
+        self.assertEqual(str(poll.question), "Pick one")
+        self.assertEqual(len(poll.answers), 2)
+        self.assertTrue(poll.multiple)
 
     def test_build_layout_view_for_components_v2(self):
         runtime = DiscordInteractionRuntime(channel_manager=_DummyChannelManager(), agent_id="default", channel_id=123)
