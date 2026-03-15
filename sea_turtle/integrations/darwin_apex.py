@@ -6,8 +6,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import discord
 import httpx
 import yaml
+from discord import app_commands
 
 
 ROOT = Path("/home/tuantuanxiaobu/DarwinApex")
@@ -211,6 +213,37 @@ class DarwinApexStore:
             return None
         return json.loads(path.read_text(encoding="utf-8"))
 
+    def open_help_requests(self, limit: int = 20) -> list[dict[str, Any]]:
+        rows = self.conn.execute(
+            """
+            SELECT id, status, severity, category, title, blocking_reason, required_user_action,
+                   verification_steps, resume_plan, created_by, related_run_id, dedupe_key,
+                   notification_message, notified_at, last_reminded_at, reminder_count,
+                   user_response_excerpt, outcome_summary, resolved_at, created_at, updated_at
+            FROM assistance_requests
+            WHERE status IN ('open', 'awaiting_user', 'user_replied', 'verifying')
+            ORDER BY rowid DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def help_request(self, request_id: str) -> dict[str, Any] | None:
+        row = self.conn.execute(
+            """
+            SELECT id, status, severity, category, title, blocking_reason, required_user_action,
+                   verification_steps, resume_plan, created_by, related_run_id, dedupe_key,
+                   notification_message, notified_at, last_reminded_at, reminder_count,
+                   user_response_excerpt, outcome_summary, resolved_at, created_at, updated_at
+            FROM assistance_requests
+            WHERE id = ?
+            LIMIT 1
+            """,
+            (request_id,),
+        ).fetchone()
+        return None if row is None else dict(row)
+
 
 async def fetch_status_bundle() -> dict[str, Any]:
     settings = load_settings()
@@ -258,6 +291,10 @@ def load_goals_bundle() -> dict[str, Any]:
     }
 
 
+def load_positions_bundle() -> dict[str, Any]:
+    return {}
+
+
 def load_last_iter_bundle() -> dict[str, Any]:
     store = DarwinApexStore(load_settings())
     running = store.latest_run()
@@ -269,6 +306,24 @@ def load_last_iter_bundle() -> dict[str, Any]:
         "running_run": running,
         "latest_release": latest_release,
         "artifact": artifact,
+    }
+
+
+def load_help_requests_bundle() -> dict[str, Any]:
+    store = DarwinApexStore(load_settings())
+    settings = load_settings()
+    return {
+        "requests": store.open_help_requests(limit=20),
+        "help_channel": f"<#{settings.help_channel_id}>" if settings.help_channel_id else "not_configured",
+    }
+
+
+def load_help_request_bundle(request_id: str) -> dict[str, Any]:
+    store = DarwinApexStore(load_settings())
+    settings = load_settings()
+    return {
+        "request": store.help_request(request_id),
+        "help_channel": f"<#{settings.help_channel_id}>" if settings.help_channel_id else "not_configured",
     }
 
 
@@ -384,6 +439,83 @@ def goals_embeds(bundle: dict[str, Any]) -> list[dict[str, Any]]:
             }
         )
     return embeds
+
+
+def positions_embed(positions: list[dict[str, Any]]) -> dict[str, Any]:
+    if not positions:
+        return {
+            "title": "角都 持仓",
+            "color": 0x95A5A6,
+            "description": "当前没有持仓。",
+        }
+    fields = []
+    for item in positions[:10]:
+        name = item.get("symbol") or item.get("mint") or "unknown"
+        value = (
+            f"entry={float(item.get('entry_notional_usd', 0.0)):.4f} USD\n"
+            f"current={float(item.get('current_value_usd', 0.0)):.4f} USD\n"
+            f"uPnL={float(item.get('unrealized_pnl_usd', 0.0)):.4f} USD"
+        )
+        fields.append(_field(name, value))
+    return {
+        "title": "角都 持仓",
+        "color": 0xF1C40F,
+        "fields": fields,
+    }
+
+
+def help_requests_embed(bundle: dict[str, Any]) -> dict[str, Any]:
+    requests = bundle.get("requests") or []
+    help_channel = str(bundle.get("help_channel") or "not_configured")
+    if not requests:
+        return {
+            "title": "角都 外部求助",
+            "color": 0x95A5A6,
+            "description": f"当前没有待处理外部求助。\nHelp Channel: {help_channel}",
+        }
+    fields = [_field("Help Channel", help_channel, inline=False)]
+    fields.extend(
+        _field(
+            item.get("id") or "n/a",
+            f"{item.get('title')}\nstatus={item.get('status')} | category={item.get('category')} | severity={item.get('severity')}",
+            inline=False,
+        )
+        for item in requests[:10]
+    )
+    return {
+        "title": "角都 外部求助",
+        "color": 0xE67E22,
+        "fields": fields,
+    }
+
+
+def help_request_embed(bundle: dict[str, Any]) -> dict[str, Any]:
+    request = bundle.get("request")
+    help_channel = str(bundle.get("help_channel") or "not_configured")
+    if request is None:
+        return {
+            "title": "角都 外部求助",
+            "color": 0x95A5A6,
+            "description": f"没查到这条求助。\nHelp Channel: {help_channel}",
+        }
+    return {
+        "title": "角都 求助详情",
+        "color": 0xE74C3C if request.get("severity") == "high" else 0xE67E22,
+        "fields": [
+            _field("Help Channel", help_channel, inline=False),
+            _field("ID", request.get("id") or "n/a", inline=False),
+            _field("Status", request.get("status") or "n/a"),
+            _field("Severity", request.get("severity") or "n/a"),
+            _field("Category", request.get("category") or "n/a"),
+            _field("Title", request.get("title") or "n/a", inline=False),
+            _field("Why", request.get("blocking_reason") or "n/a", inline=False),
+            _field("Action", request.get("required_user_action") or "n/a", inline=False),
+            _field("Verify", request.get("verification_steps") or "n/a", inline=False),
+            _field("Resume", request.get("resume_plan") or "n/a", inline=False),
+            _field("Outcome", request.get("outcome_summary") or "n/a", inline=False),
+            _field("User Reply", request.get("user_response_excerpt") or "n/a", inline=False),
+        ],
+    }
 
 
 def last_iter_embeds(bundle: dict[str, Any]) -> list[dict[str, Any]]:
@@ -538,3 +670,89 @@ def _normalize_summary_text(text: str) -> str:
         return value
     parts = [part.strip() for part in value.split(" | ") if part.strip()]
     return "\n".join(f"- {part}" for part in parts) if parts else value
+
+
+def register_discord_commands(bot, channel, agent_id: str) -> None:
+    if agent_id != "kakuzu":
+        return
+
+    async def ensure_allowed(interaction: discord.Interaction) -> bool:
+        if not channel._is_user_allowed(interaction.user.id, agent_id, "discord"):
+            await interaction.response.send_message("⛔ Unauthorized.", ephemeral=True)
+            return False
+        return True
+
+    @bot.tree.command(name="apex_status", description="查看 DarwinApex 与 MemeHarpoon 状态")
+    async def cmd_apex_status(interaction: discord.Interaction):
+        if not await ensure_allowed(interaction):
+            return
+        bundle = await fetch_status_bundle()
+        await interaction.response.send_message(
+            embed=discord.Embed.from_dict(status_embed(bundle)),
+            ephemeral=True,
+        )
+
+    @bot.tree.command(name="roadmap", description="查看 DarwinApex 长期路线图")
+    async def cmd_roadmap(interaction: discord.Interaction):
+        if not await ensure_allowed(interaction):
+            return
+        bundle = load_roadmap_bundle()
+        await interaction.response.send_message(
+            embed=discord.Embed.from_dict(roadmap_embed(bundle)),
+            ephemeral=True,
+        )
+
+    @bot.tree.command(name="goals", description="查看 DarwinApex 长期目标")
+    async def cmd_goals(interaction: discord.Interaction):
+        if not await ensure_allowed(interaction):
+            return
+        bundle = load_goals_bundle()
+        embeds = [discord.Embed.from_dict(item) for item in goals_embeds(bundle)]
+        await interaction.response.send_message(embeds=embeds[:10], ephemeral=True)
+
+    @bot.tree.command(name="last_iter", description="查看最近一轮 DarwinApex 迭代")
+    async def cmd_last_iter(interaction: discord.Interaction):
+        if not await ensure_allowed(interaction):
+            return
+        bundle = load_last_iter_bundle()
+        embeds = [discord.Embed.from_dict(item) for item in last_iter_embeds(bundle)]
+        await interaction.response.send_message(embeds=embeds[:10], ephemeral=True)
+
+    @bot.tree.command(name="positions", description="查看当前持仓")
+    async def cmd_positions(interaction: discord.Interaction):
+        if not await ensure_allowed(interaction):
+            return
+        settings = load_settings()
+        async with httpx.AsyncClient(
+            base_url=settings.meme_harpoon_base_url,
+            timeout=settings.meme_harpoon_timeout_seconds,
+        ) as client:
+            resp = await client.get("/positions")
+            resp.raise_for_status()
+        payload = resp.json().get("data") or {}
+        items = payload.get("items", [])
+        await interaction.response.send_message(
+            embed=discord.Embed.from_dict(positions_embed(items)),
+            ephemeral=True,
+        )
+
+    @bot.tree.command(name="help_requests", description="查看当前待处理外部求助")
+    async def cmd_help_requests(interaction: discord.Interaction):
+        if not await ensure_allowed(interaction):
+            return
+        bundle = load_help_requests_bundle()
+        await interaction.response.send_message(
+            embed=discord.Embed.from_dict(help_requests_embed(bundle)),
+            ephemeral=True,
+        )
+
+    @bot.tree.command(name="help_request", description="查看某条外部求助详情")
+    @app_commands.describe(request_id="求助 ID")
+    async def cmd_help_request(interaction: discord.Interaction, request_id: str):
+        if not await ensure_allowed(interaction):
+            return
+        bundle = load_help_request_bundle(request_id.strip())
+        await interaction.response.send_message(
+            embed=discord.Embed.from_dict(help_request_embed(bundle)),
+            ephemeral=True,
+        )
