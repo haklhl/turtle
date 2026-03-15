@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -278,6 +280,30 @@ class DarwinApexStore:
         ).fetchone()
         return None if row is None else dict(row)
 
+    def latest_prompt(self) -> dict[str, Any] | None:
+        row = self.conn.execute(
+            """
+            SELECT run_id, trigger_type, model, reasoning, prompt_text, prompt_chars, created_at
+            FROM review_prompts
+            ORDER BY rowid DESC
+            LIMIT 1
+            """
+        ).fetchone()
+        return None if row is None else dict(row)
+
+    def prompt_for_run(self, run_id: str) -> dict[str, Any] | None:
+        row = self.conn.execute(
+            """
+            SELECT run_id, trigger_type, model, reasoning, prompt_text, prompt_chars, created_at
+            FROM review_prompts
+            WHERE run_id = ?
+            ORDER BY rowid DESC
+            LIMIT 1
+            """,
+            (run_id,),
+        ).fetchone()
+        return None if row is None else dict(row)
+
 
 async def fetch_status_bundle() -> dict[str, Any]:
     settings = load_settings()
@@ -359,6 +385,16 @@ def load_help_request_bundle(request_id: str) -> dict[str, Any]:
         "request": store.help_request(request_id),
         "help_channel": f"<#{settings.help_channel_id}>" if settings.help_channel_id else "not_configured",
     }
+
+
+def load_last_prompt_bundle() -> dict[str, Any]:
+    store = DarwinApexStore(load_settings())
+    return {"prompt": store.latest_prompt()}
+
+
+def load_prompt_bundle(run_id: str) -> dict[str, Any]:
+    store = DarwinApexStore(load_settings())
+    return {"prompt": store.prompt_for_run(run_id.strip())}
 
 
 def status_embed(bundle: dict[str, Any]) -> dict[str, Any]:
@@ -563,6 +599,36 @@ def model_embed(*, current_model: str, allowed_models: list[str], current_depth:
             _field("Allowed Depths", ", ".join(allowed_reasoning) or "n/a", inline=False),
         ],
     }
+
+
+def prompt_embed(prompt: dict[str, Any] | None, *, title: str, missing_text: str) -> dict[str, Any]:
+    if prompt is None:
+        return {
+            "title": title,
+            "color": 0x95A5A6,
+            "description": missing_text,
+        }
+    return {
+        "title": title,
+        "color": 0x1ABC9C,
+        "fields": [
+            _field("Run ID", prompt.get("run_id") or "n/a", inline=False),
+            _field("Trigger", prompt.get("trigger_type") or "n/a"),
+            _field("Model", prompt.get("model") or "n/a"),
+            _field("Depth", prompt.get("reasoning") or "n/a"),
+            _field("Chars", str(prompt.get("prompt_chars") or "n/a")),
+            _field("At", prompt.get("created_at") or "n/a", inline=False),
+        ],
+    }
+
+
+def write_prompt_attachment(prompt: dict[str, Any]) -> Path:
+    run_id = str(prompt.get("run_id") or "unknown")
+    fd, temp_path = tempfile.mkstemp(prefix=f"darwin_prompt_{run_id}_", suffix=".txt")
+    path = Path(temp_path)
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(str(prompt.get("prompt_text") or ""))
+    return path
 
 
 def last_iter_embeds(bundle: dict[str, Any]) -> list[dict[str, Any]]:
@@ -801,6 +867,57 @@ def register_discord_commands(bot, channel, agent_id: str) -> None:
         bundle = load_help_request_bundle(request_id.strip())
         await interaction.response.send_message(
             embed=discord.Embed.from_dict(help_request_embed(bundle)),
+            ephemeral=True,
+        )
+
+    @bot.tree.command(name="darwin_last_prompt", description="发送最近一轮 review prompt")
+    async def cmd_last_prompt(interaction: discord.Interaction):
+        if not await ensure_allowed(interaction):
+            return
+        bundle = load_last_prompt_bundle()
+        prompt = bundle.get("prompt")
+        embed = discord.Embed.from_dict(
+            prompt_embed(
+                prompt,
+                title="角都 最近一轮 Prompt",
+                missing_text="还没有 review prompt 记录。",
+            )
+        )
+        if prompt is None:
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+            return
+        attachment = write_prompt_attachment(prompt)
+        await interaction.response.send_message(
+            embed=embed,
+            file=discord.File(str(attachment), filename=f"review_prompt_{prompt['run_id']}.txt"),
+            ephemeral=True,
+        )
+
+    @bot.tree.command(name="darwin_prompt", description="按 run_id 发送 review prompt")
+    @app_commands.describe(run_id="review run_id")
+    async def cmd_prompt(interaction: discord.Interaction, run_id: str):
+        if not await ensure_allowed(interaction):
+            return
+        run_id = run_id.strip()
+        if not run_id:
+            await interaction.response.send_message("用法：`/darwin_prompt <run_id>`", ephemeral=True)
+            return
+        bundle = load_prompt_bundle(run_id)
+        prompt = bundle.get("prompt")
+        embed = discord.Embed.from_dict(
+            prompt_embed(
+                prompt,
+                title="角都 Prompt 详情",
+                missing_text=f"没查到 run_id=`{run_id}` 的 prompt。",
+            )
+        )
+        if prompt is None:
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+            return
+        attachment = write_prompt_attachment(prompt)
+        await interaction.response.send_message(
+            embed=embed,
+            file=discord.File(str(attachment), filename=f"review_prompt_{prompt['run_id']}.txt"),
             ephemeral=True,
         )
 
