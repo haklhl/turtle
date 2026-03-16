@@ -208,6 +208,7 @@ def _build_discord_untrusted_context(discord_context: dict | None) -> str:
     thread_parent_id = str(discord_context.get("thread_parent_id") or "").strip()
     thread_parent_name = str(discord_context.get("thread_parent_name") or "").strip()
     thread_parent_type = str(discord_context.get("thread_parent_type") or "").strip()
+    referenced_message = discord_context.get("referenced_message")
 
     if guild_name:
         lines.append(f"- Guild Name: {guild_name}")
@@ -224,6 +225,44 @@ def _build_discord_untrusted_context(discord_context: dict | None) -> str:
         lines.append(f"- Thread Parent Name: {thread_parent_name}")
     if thread_parent_type:
         lines.append(f"- Thread Parent Type: {thread_parent_type}")
+
+    if isinstance(referenced_message, dict) and referenced_message:
+        lines.append("")
+        lines.append("### Referenced Message (Untrusted, Truncated)")
+        message_id = str(referenced_message.get("message_id") or "").strip()
+        author_name = str(referenced_message.get("author_name") or "").strip()
+        created_at = str(referenced_message.get("created_at") or "").strip()
+        content_excerpt = str(referenced_message.get("content_excerpt") or "").strip()
+        note = str(referenced_message.get("note") or "").strip()
+        if message_id:
+            lines.append(f"- Message ID: {message_id}")
+        if author_name:
+            lines.append(f"- Author: {author_name}")
+        if created_at:
+            lines.append(f"- Created At: {created_at}")
+        if content_excerpt:
+            lines.append(f"- Content Excerpt: {content_excerpt}")
+        embeds = referenced_message.get("embeds")
+        if isinstance(embeds, list):
+            for index, embed in enumerate(embeds[:2], start=1):
+                if not isinstance(embed, dict):
+                    continue
+                title = str(embed.get("title") or "").strip()
+                description = str(embed.get("description") or "").strip()
+                lines.append(f"- Referenced Embed {index} Title: {title or 'n/a'}")
+                if description:
+                    lines.append(f"- Referenced Embed {index} Description: {description}")
+                fields = embed.get("fields")
+                if isinstance(fields, list):
+                    for field_index, field in enumerate(fields[:3], start=1):
+                        if not isinstance(field, dict):
+                            continue
+                        field_name = str(field.get("name") or "").strip() or f"Field {field_index}"
+                        field_value = str(field.get("value") or "").strip()
+                        if field_value:
+                            lines.append(f"- Referenced Embed {index} {field_name}: {field_value}")
+        if note:
+            lines.append(f"- Note: {note}")
 
     if not lines:
         return ""

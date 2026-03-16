@@ -126,6 +126,48 @@ class DiscordChannel(BaseChannel):
             return True
         return guild_id in allowed
 
+    @staticmethod
+    def _summarize_embed(embed: discord.Embed) -> dict[str, Any]:
+        fields = []
+        for item in (embed.fields or [])[:3]:
+            fields.append({
+                "name": (item.name or "")[:256],
+                "value": (item.value or "")[:300],
+            })
+        return {
+            "title": (embed.title or "")[:256],
+            "description": (embed.description or "")[:500],
+            "fields": fields,
+        }
+
+    async def _extract_referenced_context(self, message: discord.Message, bot: commands.Bot) -> dict[str, Any] | None:
+        reference = message.reference
+        if not reference or not reference.message_id:
+            return None
+        referenced_message = getattr(reference, "resolved", None)
+        if referenced_message is None and reference.channel_id:
+            try:
+                channel_obj = message.channel
+                if int(reference.channel_id) != int(message.channel.id):
+                    channel_obj = await self._get_channel(bot, reference.channel_id)
+                referenced_message = await channel_obj.fetch_message(int(reference.message_id))
+            except Exception as e:
+                logger.debug(f"Failed to fetch referenced Discord message {reference.message_id}: {e}")
+                referenced_message = None
+        if not isinstance(referenced_message, discord.Message):
+            return {
+                "message_id": str(reference.message_id),
+                "note": "Referenced message exists but could not be fetched.",
+            }
+        return {
+            "message_id": str(referenced_message.id),
+            "author_name": getattr(referenced_message.author, "display_name", None) or str(referenced_message.author),
+            "created_at": referenced_message.created_at.isoformat() if referenced_message.created_at else "",
+            "content_excerpt": (referenced_message.content or "")[:1000],
+            "embeds": [self._summarize_embed(embed) for embed in (referenced_message.embeds or [])[:2]],
+            "note": "This is a truncated referenced-message summary, not the full original message. If you need the full content or surrounding context, fetch it by Discord message/channel tools.",
+        }
+
     def _is_channel_allowed(self, channel_id: int, dc_cfg: dict) -> bool:
         """Check if channel is in allowlist (empty = allow all)."""
         allowed = dc_cfg.get("allowed_channel_ids", [])
@@ -200,6 +242,7 @@ class DiscordChannel(BaseChannel):
             channel_topic = getattr(message.channel, "topic", None)
             if is_thread and thread_parent is not None:
                 channel_topic = getattr(thread_parent, "topic", None)
+            referenced_context = await channel._extract_referenced_context(message, bot)
             logger.debug(f"user_id={user_id}, chat_id={chat_id}, guild_id={guild_id}")
 
             if isinstance(message.channel, discord.DMChannel):
@@ -277,6 +320,7 @@ class DiscordChannel(BaseChannel):
                         "thread_parent_id": thread_parent_id,
                         "thread_parent_name": thread_parent_name,
                         "thread_parent_type": thread_parent_type,
+                        "referenced_message": referenced_context,
                     },
                 )
                 if not success:
