@@ -586,8 +586,10 @@ class Daemon:
                         )
                         effort_line = f"\n  Reasoning Effort: {effort}"
                     display_model = get_display_model_name(str(data.get("model", "?")))
+                    session_id = str(data.get("session_id") or "n/a")
                     return (
                         f"📊 Context Stats:\n"
+                        f"  Session ID: {session_id}\n"
                         f"  Model: {display_model}\n"
                         f"  Provider: {provider}{effort_line}\n"
                         f"  Messages: {ctx.get('message_count', 0)}\n"

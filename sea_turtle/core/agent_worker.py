@@ -1217,7 +1217,7 @@ class AgentWorker:
 
                 elif msg_type == "get_stats":
                     source = msg.get("source", "unknown")
-                    _, context = self._get_context(
+                    conversation_id, context = self._get_context(
                         source,
                         msg.get("chat_id"),
                         msg.get("user_id"),
@@ -1239,6 +1239,7 @@ class AgentWorker:
                     )
                     stats = {
                         "context": context.get_stats(),
+                        "session_id": conversation_id,
                         "token_usage": self.token_counter.get_session_usage(),
                         "model": self.model,
                     }
