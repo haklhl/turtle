@@ -41,7 +41,7 @@
         "sandbox": "workspace-write",
         "approval_policy": "never",
         "reasoning_effort": "medium",
-        "timeout_seconds": 300,
+        "timeout_seconds": 600,
         "extra_args": []
       }
     }
@@ -112,7 +112,7 @@
       "codex": {
         "sandbox": "workspace-write",
         "reasoning_effort": "medium",
-        "timeout_seconds": 300
+        "timeout_seconds": 600
       },
       "telegram": {
         "bot_token": "your-telegram-bot-token-here",

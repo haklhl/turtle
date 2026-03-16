@@ -407,7 +407,7 @@ def _create_llm_provider(
             or provider_cfg.get("sandbox", "workspace-write")
         )
         reasoning_effort = agent_codex_cfg.get("reasoning_effort") or provider_cfg.get("reasoning_effort")
-        timeout_seconds = agent_codex_cfg.get("timeout_seconds") or provider_cfg.get("timeout_seconds", 300)
+        timeout_seconds = agent_codex_cfg.get("timeout_seconds") or provider_cfg.get("timeout_seconds", 600)
 
         return CodexProvider(
             api_key=api_key,

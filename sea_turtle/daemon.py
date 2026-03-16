@@ -517,7 +517,7 @@ class Daemon:
                     codex_lines = (
                         f"\n  Codex Sandbox: {codex_cfg.get('sandbox') or self.config.get('llm', {}).get('providers', {}).get('codex', {}).get('sandbox', 'workspace-write')}"
                         f"\n  Reasoning Effort: {codex_cfg.get('reasoning_effort') or self.config.get('llm', {}).get('providers', {}).get('codex', {}).get('reasoning_effort', 'medium')}"
-                        f"\n  Timeout: {codex_cfg.get('timeout_seconds') or self.config.get('llm', {}).get('providers', {}).get('codex', {}).get('timeout_seconds', 300)}s"
+                        f"\n  Timeout: {codex_cfg.get('timeout_seconds') or self.config.get('llm', {}).get('providers', {}).get('codex', {}).get('timeout_seconds', 600)}s"
                     )
                 runtime_lines = ""
                 if handle.is_alive:

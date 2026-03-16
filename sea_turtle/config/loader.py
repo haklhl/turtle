@@ -34,7 +34,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
                 "sandbox": "workspace-write",
                 "approval_policy": "never",
                 "reasoning_effort": "medium",
-                "timeout_seconds": 300,
+                "timeout_seconds": 600,
                 "extra_args": [],
             },
         },

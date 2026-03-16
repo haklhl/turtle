@@ -34,7 +34,7 @@ class CodexProvider(BaseLLMProvider):
         approval_policy: str | None = None,
         profile: str | None = None,
         reasoning_effort: str | None = None,
-        timeout_seconds: int = 300,
+        timeout_seconds: int = 600,
         extra_args: list[str] | None = None,
         **kwargs,
     ):
