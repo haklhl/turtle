@@ -699,9 +699,11 @@ class AgentWorker:
         )
         reply = await self._process_message(
             user_message,
-            source="job",
-            chat_id=f"{job_id}:step:{step_index}",
-            user_id=self.agent_id,
+            source=str(job.get("source") or "discord"),
+            chat_id=job.get("job_thread_id") or job.get("chat_id"),
+            user_id=job.get("user_id") or self.agent_id,
+            guild_id=job.get("guild_id"),
+            metadata=job.get("thread_metadata") if isinstance(job.get("thread_metadata"), dict) else {},
         )
         summary, report = extract_job_step_report(reply or "")
         if not report:

@@ -78,6 +78,10 @@ def _normalize_artifacts(value: Any) -> list[str]:
     return [str(item).strip() for item in value if str(item).strip()]
 
 
+def _normalize_metadata(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
 def _normalize_job(job: dict[str, Any], index: int) -> dict[str, Any]:
     job_id = str(job.get("id") or f"job-{index}").strip() or f"job-{index}"
     status = str(job.get("status") or "queued").strip().lower()
@@ -107,6 +111,15 @@ def _normalize_job(job: dict[str, Any], index: int) -> dict[str, Any]:
         "source": str(job.get("source") or "telegram").strip() or "telegram",
         "chat_id": job.get("chat_id"),
         "user_id": job.get("user_id"),
+        "guild_id": job.get("guild_id"),
+        "source_message_id": job.get("source_message_id"),
+        "parent_channel_id": job.get("parent_channel_id"),
+        "parent_message_id": job.get("parent_message_id"),
+        "job_thread_id": job.get("job_thread_id"),
+        "summary_channel_id": job.get("summary_channel_id"),
+        "summary_message_id": job.get("summary_message_id"),
+        "channel_session_key": str(job.get("channel_session_key") or "").strip(),
+        "thread_metadata": _normalize_metadata(job.get("thread_metadata")),
         "title": str(job.get("title") or "").strip(),
         "user_request": str(job.get("user_request") or "").strip(),
         "status": status,
@@ -208,6 +221,15 @@ def create_job(
     source: str,
     chat_id: Any,
     user_id: Any,
+    guild_id: Any = None,
+    source_message_id: Any = None,
+    parent_channel_id: Any = None,
+    parent_message_id: Any = None,
+    job_thread_id: Any = None,
+    summary_channel_id: Any = None,
+    summary_message_id: Any = None,
+    channel_session_key: str = "",
+    thread_metadata: dict[str, Any] | None = None,
     title: str,
     user_request: str,
     cooldown_seconds: int = DEFAULT_JOB_COOLDOWN_SECONDS,
@@ -224,6 +246,15 @@ def create_job(
         "source": source,
         "chat_id": chat_id,
         "user_id": user_id,
+        "guild_id": guild_id,
+        "source_message_id": source_message_id,
+        "parent_channel_id": parent_channel_id,
+        "parent_message_id": parent_message_id,
+        "job_thread_id": job_thread_id,
+        "summary_channel_id": summary_channel_id,
+        "summary_message_id": summary_message_id,
+        "channel_session_key": channel_session_key,
+        "thread_metadata": thread_metadata or {},
         "title": title,
         "user_request": user_request,
         "status": "queued",

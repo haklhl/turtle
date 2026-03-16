@@ -35,6 +35,10 @@ SYS_COMMAND_TITLES = {
     "/help": "系统命令",
     "/context": "上下文统计",
     "/prompt": "最终系统提示词",
+    "/heartbeat": "心跳状态",
+    "/job": "后台任务",
+    "/job_cancel": "后台任务取消",
+    "/schedules": "定时作业",
     "/usage": "Token 用量",
     "/status": "Agent 状态",
     "/reset": "上下文重置",
@@ -303,6 +307,38 @@ class DiscordChannel(BaseChannel):
                 command="/prompt",
             )
 
+        @bot.tree.command(name="sys_heartbeat", description="Show heartbeat status")
+        async def cmd_heartbeat(interaction: discord.Interaction):
+            await channel._respond_system_slash(
+                interaction,
+                agent_id=agent_id,
+                command="/heartbeat",
+            )
+
+        @bot.tree.command(name="sys_job", description="Show current background job status")
+        async def cmd_job(interaction: discord.Interaction):
+            await channel._respond_system_slash(
+                interaction,
+                agent_id=agent_id,
+                command="/job",
+            )
+
+        @bot.tree.command(name="sys_job_cancel", description="Cancel the current background job")
+        async def cmd_job_cancel(interaction: discord.Interaction):
+            await channel._respond_system_slash(
+                interaction,
+                agent_id=agent_id,
+                command="/job_cancel",
+            )
+
+        @bot.tree.command(name="sys_schedules", description="Show recent schedules")
+        async def cmd_schedules(interaction: discord.Interaction):
+            await channel._respond_system_slash(
+                interaction,
+                agent_id=agent_id,
+                command="/schedules",
+            )
+
         @bot.tree.command(name="sys_usage", description="Show token usage and costs")
         async def cmd_usage(interaction: discord.Interaction):
             await channel._respond_system_slash(
@@ -372,6 +408,7 @@ class DiscordChannel(BaseChannel):
         attachments: list[str] | None = None,
         react_to_message_id: Any = None,
         reactions: list[str] | None = None,
+        reference_message_id: Any = None,
     ) -> None:
         """Send a message to a Discord channel, optionally with embeds/files."""
         try:
@@ -409,6 +446,11 @@ class DiscordChannel(BaseChannel):
                     kwargs["poll"] = poll_obj
                 if file_paths:
                     kwargs["files"] = [discord.File(str(path), filename=path.name) for path in file_paths[:10]]
+                if reference_message_id:
+                    kwargs["reference"] = channel.get_partial_message(int(reference_message_id)).to_reference(
+                        fail_if_not_exists=False
+                    )
+                    kwargs["mention_author"] = False
                 if message_text:
                     await channel.send(message_text, **kwargs)
                 elif embed_objs or file_paths or view or poll_obj:
@@ -428,6 +470,11 @@ class DiscordChannel(BaseChannel):
                         kwargs["poll"] = poll_obj
                     if file_paths and i == 0:
                         kwargs["files"] = [discord.File(str(path), filename=path.name) for path in file_paths[:10]]
+                    if reference_message_id and i == 0:
+                        kwargs["reference"] = channel.get_partial_message(int(reference_message_id)).to_reference(
+                            fail_if_not_exists=False
+                        )
+                        kwargs["mention_author"] = False
                     await channel.send(chunk, **kwargs)
                     await asyncio.sleep(0.3)
             if react_to_message_id and reactions:
@@ -475,6 +522,7 @@ class DiscordChannel(BaseChannel):
         attachments: list[str] | None = None,
         react_to_message_id: Any = None,
         reactions: list[str] | None = None,
+        reference_message_id: Any = None,
     ) -> None:
         """Send a message to a Discord channel by ID."""
         if not agent_id or agent_id not in self.bots:
@@ -496,9 +544,75 @@ class DiscordChannel(BaseChannel):
                     attachments=attachments,
                     react_to_message_id=react_to_message_id,
                     reactions=reactions,
+                    reference_message_id=reference_message_id,
                 )
         except Exception as e:
             logger.error(f"Failed to send Discord message to {chat_id}: {e}")
+
+    async def _get_channel(self, bot: commands.Bot, channel_id: int | str):
+        try:
+            channel_int = int(channel_id)
+        except Exception as exc:
+            raise ValueError(f"Invalid Discord channel id: {channel_id}") from exc
+        channel = bot.get_channel(channel_int)
+        if channel is None:
+            channel = await bot.fetch_channel(channel_int)
+        return channel
+
+    @staticmethod
+    def _channel_metadata(channel_obj: Any) -> dict[str, Any]:
+        guild = getattr(channel_obj, "guild", None)
+        is_thread = isinstance(channel_obj, discord.Thread)
+        parent = getattr(channel_obj, "parent", None) if is_thread else None
+        channel_topic = getattr(channel_obj, "topic", None)
+        if is_thread and parent is not None:
+            channel_topic = getattr(parent, "topic", None)
+        return {
+            "guild_name": getattr(guild, "name", None),
+            "channel_name": getattr(channel_obj, "name", None),
+            "channel_topic": channel_topic,
+            "is_thread": is_thread,
+            "thread_name": getattr(channel_obj, "name", None) if is_thread else None,
+            "thread_parent_id": getattr(parent, "id", None) if parent else None,
+            "thread_parent_name": getattr(parent, "name", None) if parent else None,
+            "thread_parent_type": str(parent.type) if parent else None,
+        }
+
+    async def ensure_job_thread(
+        self,
+        *,
+        agent_id: str,
+        channel_id: Any,
+        message_id: Any,
+        title: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        if agent_id not in self.bots:
+            raise RuntimeError(f"Discord bot not available for agent '{agent_id}'")
+        bot = self.bots[agent_id]
+        current_channel = await self._get_channel(bot, channel_id)
+        metadata = metadata or {}
+        if bool(metadata.get("is_thread")) and isinstance(current_channel, discord.Thread):
+            return {
+                "thread_id": current_channel.id,
+                "parent_channel_id": getattr(current_channel.parent, "id", None),
+                "summary_channel_id": current_channel.id,
+                "summary_message_id": message_id,
+                "thread_metadata": self._channel_metadata(current_channel),
+            }
+
+        if not isinstance(current_channel, (discord.TextChannel, discord.ForumChannel)):
+            raise RuntimeError("Discord job thread can only be created from a guild text/forum channel message.")
+        message = await current_channel.fetch_message(int(message_id))
+        thread_name = title.strip()[:90] or f"job-{message.id}"
+        thread = await message.create_thread(name=thread_name, auto_archive_duration=discord.ThreadArchiveDuration.one_day)
+        return {
+            "thread_id": thread.id,
+            "parent_channel_id": current_channel.id,
+            "summary_channel_id": current_channel.id,
+            "summary_message_id": message.id,
+            "thread_metadata": self._channel_metadata(thread),
+        }
 
     async def stop(self) -> None:
         """Stop all Discord bots."""
@@ -574,6 +688,14 @@ def _build_system_command_embed(command: str, reply: str) -> discord.Embed | Non
         return _build_help_embed(title, reply)
     if command_name in {"/status", "/context"}:
         return _build_key_value_embed(title, reply)
+    if command_name == "/heartbeat":
+        return _build_bullet_status_embed(title, reply, 0xE74C3C, 0x2ECC71)
+    if command_name == "/job":
+        return _build_bullet_status_embed(title, reply, 0xE67E22, 0x3498DB)
+    if command_name == "/job_cancel":
+        return _build_simple_embed(title, reply, 0xE67E22)
+    if command_name == "/schedules":
+        return _build_schedule_embed(title, reply)
     if command_name == "/usage":
         return _build_usage_embed(title, reply)
     if command_name == "/model":
@@ -642,6 +764,49 @@ def _build_usage_embed(title: str, reply: str) -> discord.Embed:
         )
     if description_lines:
         embed.description = _clamp_text("\n".join(description_lines), 4096)
+    return embed
+
+
+def _build_bullet_status_embed(title: str, reply: str, warning_color: int, ok_color: int) -> discord.Embed:
+    lines = [line.strip() for line in reply.splitlines() if line.strip()]
+    heading = lines[0] if lines else title
+    lowered = reply.lower()
+    color = ok_color
+    if "disabled" in lowered or "没有" in lowered or "取消" in lowered:
+        color = warning_color
+    if "失败" in lowered or "stopped" in lowered or "error" in lowered:
+        color = 0xE74C3C
+    embed = discord.Embed(title=title, description=_strip_leading_emoji(heading), color=color)
+    for line in lines[1:]:
+        if line.startswith("- ") and ":" in line:
+            key, value = line[2:].split(":", 1)
+            embed.add_field(name=key.strip()[:256] or "Value", value=_clamp_text(value.strip() or "n/a", 1024), inline=False)
+        else:
+            embed.add_field(name="Note", value=_clamp_text(line, 1024), inline=False)
+    return embed
+
+
+def _build_schedule_embed(title: str, reply: str) -> discord.Embed:
+    lines = [line.rstrip() for line in reply.splitlines() if line.strip()]
+    embed = discord.Embed(title=title, color=0x3498DB)
+    if not lines:
+        embed.description = "当前没有定时作业。"
+        return embed
+    description = lines[0]
+    embed.description = _strip_leading_emoji(description)
+    current_name = ""
+    current_value = ""
+    for line in lines[1:]:
+        stripped = line.strip()
+        if stripped.startswith("- "):
+            if current_name:
+                embed.add_field(name=current_name[:256], value=_clamp_text(current_value.strip() or "n/a", 1024), inline=False)
+            current_name = stripped[2:][:256]
+            current_value = ""
+        else:
+            current_value = f"{current_value}\n{stripped}".strip()
+    if current_name:
+        embed.add_field(name=current_name[:256], value=_clamp_text(current_value.strip() or "n/a", 1024), inline=False)
     return embed
 
 

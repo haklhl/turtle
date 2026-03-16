@@ -166,6 +166,9 @@ class Daemon:
             return False
         return self._is_explicit_job_request(text) or self._looks_heavy_request(text)
 
+    def _discord_conversation_id(self, agent_id: str, guild_id: Any, channel_id: Any) -> str:
+        return f"discord|guild:{guild_id}|channel:{channel_id}|agent:{agent_id}"
+
     @staticmethod
     def _derive_job_title(text: str) -> str:
         stripped = (text or "").strip()
@@ -203,6 +206,161 @@ class Daemon:
         if job.get("last_error"):
             lines.append(f"- Last Error: {str(job.get('last_error'))[:300]}")
         return "\n".join(lines)
+
+    @staticmethod
+    def _build_job_start_embed(job: dict[str, Any], thread_id: Any) -> dict[str, Any]:
+        return {
+            "title": f"后台任务已创建 · {job.get('id')}",
+            "color": 0x3498DB,
+            "description": str(job.get("title") or "后台任务"),
+            "fields": [
+                {"name": "Thread", "value": f"<#{thread_id}>", "inline": False},
+                {"name": "状态", "value": str(job.get("status") or "queued"), "inline": True},
+                {"name": "阶段", "value": str(job.get("current_phase") or "queued"), "inline": True},
+                {"name": "说明", "value": str(job.get("progress_text") or "已接单，等待后台开始第一步处理。")[:1024], "inline": False},
+            ],
+        }
+
+    @staticmethod
+    def _build_job_step_embed(job: dict[str, Any], *, summary: str = "", output: str = "", outcome: str = "success") -> dict[str, Any]:
+        status = str(job.get("status") or "waiting")
+        color = 0x3498DB
+        if status == "completed":
+            color = 0x2ECC71
+        elif status in {"failed", "cancelled"} or outcome in {"timeout", "runtime_error", "parse_error", "provider_error"}:
+            color = 0xE67E22 if outcome == "timeout" else 0xE74C3C
+        fields = [
+            {"name": "步骤", "value": f"{job.get('step_count', 0)}/{job.get('max_steps', 0)}", "inline": True},
+            {"name": "状态", "value": status, "inline": True},
+            {"name": "阶段", "value": str(job.get("current_phase") or "queued"), "inline": True},
+            {"name": "进展", "value": str(job.get("progress_text") or "暂无进展")[:1024], "inline": False},
+        ]
+        if summary:
+            fields.append({"name": "本步摘要", "value": summary[:1024], "inline": False})
+        notes = [str(item).strip() for item in (job.get("working_notes") or []) if str(item).strip()]
+        if notes:
+            fields.append({"name": "Working Notes", "value": "\n".join(f"- {item}" for item in notes[-5:])[:1024], "inline": False})
+        artifacts = [str(item).strip() for item in (job.get("artifacts") or []) if str(item).strip()]
+        if artifacts:
+            fields.append({"name": "Artifacts", "value": "\n".join(artifacts[-5:])[:1024], "inline": False})
+        next_run_at = str(job.get("next_run_at") or "").replace("T", " ")
+        if next_run_at and status not in {"completed", "failed", "cancelled"}:
+            fields.append({"name": "下一次推进", "value": next_run_at[:1024], "inline": False})
+        if job.get("last_error"):
+            fields.append({"name": "错误", "value": str(job.get("last_error"))[:1024], "inline": False})
+        return {
+            "title": f"Job Step · {job.get('id')} · {job.get('step_count', 0)}",
+            "color": color,
+            "fields": fields[:25],
+            "footer": {"text": f"Outcome: {outcome}"},
+        }
+
+    @staticmethod
+    def _build_job_final_embed(job: dict[str, Any]) -> dict[str, Any]:
+        status = str(job.get("status") or "completed")
+        color = 0x2ECC71 if status == "completed" else (0x95A5A6 if status == "cancelled" else 0xE74C3C)
+        fields = [
+            {"name": "状态", "value": status, "inline": True},
+            {"name": "步骤", "value": f"{job.get('step_count', 0)}/{job.get('max_steps', 0)}", "inline": True},
+            {"name": "阶段", "value": str(job.get("current_phase") or "done"), "inline": True},
+            {"name": "总结", "value": str(job.get("result_summary") or job.get("progress_text") or "n/a")[:1024], "inline": False},
+        ]
+        if job.get("result_file"):
+            fields.append({"name": "结果文件", "value": str(job.get("result_file"))[:1024], "inline": False})
+        if job.get("last_error"):
+            fields.append({"name": "最后错误", "value": str(job.get("last_error"))[:1024], "inline": False})
+        return {
+            "title": f"后台任务完成 · {job.get('id')}",
+            "color": color,
+            "description": str(job.get("title") or "后台任务"),
+            "fields": fields[:25],
+        }
+
+    async def _start_discord_background_job(
+        self,
+        *,
+        text: str,
+        agent_id: str,
+        chat_id: Any,
+        user_id: Any,
+        guild_id: Any,
+        message_id: Any,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        workspace = (get_agent_config(self.config, agent_id) or {}).get("workspace", f"~/.sea_turtle/agents/{agent_id}")
+        active_job = get_active_job(workspace)
+        if active_job:
+            await self._send_discord_reply(
+                chat_id,
+                "",
+                agent_id,
+                embed={
+                    "title": "已有后台任务在执行",
+                    "color": 0xE67E22,
+                    "description": str(active_job.get("title") or "(untitled)"),
+                    "fields": [
+                        {"name": "Job", "value": str(active_job.get("id") or "n/a"), "inline": True},
+                        {"name": "状态", "value": str(active_job.get("status") or "n/a"), "inline": True},
+                        {"name": "进展", "value": str(active_job.get("progress_text") or "暂无进展")[:1024], "inline": False},
+                    ],
+                },
+                reference_message_id=message_id,
+            )
+            return
+
+        if not self._discord_channel:
+            logger.warning("Discord channel unavailable, cannot start background job.")
+            return
+
+        try:
+            thread_info = await self._discord_channel.ensure_job_thread(
+                agent_id=agent_id,
+                channel_id=chat_id,
+                message_id=message_id,
+                title=self._derive_job_title(text),
+                metadata=metadata or {},
+            )
+        except Exception as e:
+            logger.error(f"Failed to create/reuse Discord job thread: {e}", exc_info=True)
+            await self._send_discord_reply(
+                chat_id,
+                f"❌ 无法创建任务 thread：{e}",
+                agent_id,
+                reference_message_id=message_id,
+            )
+            return
+
+        thread_id = thread_info["thread_id"]
+        job = create_job(
+            workspace,
+            source="discord",
+            chat_id=thread_id,
+            user_id=user_id,
+            guild_id=guild_id,
+            source_message_id=message_id,
+            parent_channel_id=thread_info.get("parent_channel_id"),
+            parent_message_id=message_id,
+            job_thread_id=thread_id,
+            summary_channel_id=thread_info.get("summary_channel_id"),
+            summary_message_id=thread_info.get("summary_message_id"),
+            channel_session_key=self._discord_conversation_id(agent_id, guild_id, thread_id),
+            thread_metadata=thread_info.get("thread_metadata") or {},
+            title=self._derive_job_title(text),
+            user_request=text,
+        )
+
+        await self._send_discord_reply(
+            thread_id,
+            "",
+            agent_id,
+            embed=self._build_job_start_embed(job, thread_id),
+        )
+        await self._send_discord_reply(
+            thread_info.get("summary_channel_id") or chat_id,
+            f"已创建后台任务线程 <#{thread_id}>，我会在子区分步推进。",
+            agent_id,
+            reference_message_id=thread_info.get("summary_message_id") or message_id,
+        )
 
     def _write_prompt_export(self, agent_id: str, source: str, prompt: str) -> str:
         agent_cfg = get_agent_config(self.config, agent_id) or {}
@@ -326,14 +484,28 @@ class Daemon:
             return f"🐢 Welcome! I'm {name}, your personal AI assistant.\nType /help for available commands."
 
         elif cmd == "/help":
+            if source == "discord":
+                return (
+                    "🐢 Sea Turtle Discord Commands:\n"
+                    "/sys_help — Show available commands\n"
+                    "/sys_context — Show context stats\n"
+                    "/sys_prompt — Show current final system prompt (owner only)\n"
+                    "/sys_heartbeat — Show heartbeat status\n"
+                    "/sys_job — Show current background job status\n"
+                    "/sys_job_cancel — Cancel the current background job\n"
+                    "/sys_schedules — Show recent schedules\n"
+                    "/sys_usage — Show token usage & costs\n"
+                    "/sys_status — Show agent status\n"
+                    "/sys_model — List or switch models\n"
+                    "/effort list — List Codex reasoning efforts\n"
+                    "/effort [minimal|low|medium|high|xhigh] — Show or set Codex reasoning effort"
+                )
             return (
                 "🐢 Sea Turtle Commands:\n"
                 "/reset — Reset conversation context\n"
                 "/context — Show context stats\n"
                 "/prompt — Show current final system prompt (owner only)\n"
                 "/heartbeat — Show heartbeat status and latest result\n"
-                "/job — Show current background job status\n"
-                "/job_cancel — Cancel the current background job\n"
                 "/schedules — Show recent schedules\n"
                 "/tasks — Alias of /schedules\n"
                 "/restart — Restart agent process\n"
@@ -441,6 +613,8 @@ class Daemon:
             return "\n".join(lines)
 
         elif cmd == "/job":
+            if source != "discord":
+                return "🧩 后台任务入口仅在 Discord 提供。"
             workspace = (get_agent_config(self.config, agent_id) or {}).get("workspace", f"~/.sea_turtle/agents/{agent_id}")
             job = get_active_job(workspace)
             if not job:
@@ -449,6 +623,8 @@ class Daemon:
             return self._format_job_status(job or {})
 
         elif cmd == "/job_cancel":
+            if source != "discord":
+                return "🧩 后台任务入口仅在 Discord 提供。"
             workspace = (get_agent_config(self.config, agent_id) or {}).get("workspace", f"~/.sea_turtle/agents/{agent_id}")
             job = get_active_job(workspace)
             if not job:
@@ -657,45 +833,16 @@ class Daemon:
             return True
 
         workspace = (get_agent_config(self.config, agent_id) or {}).get("workspace", f"~/.sea_turtle/agents/{agent_id}")
-        if self._should_start_background_job(text, attachments):
-            active_job = get_active_job(workspace)
-            if active_job:
-                asyncio.create_task(self._send_reply({
-                    "type": "reply",
-                    "agent_id": agent_id,
-                    "source": source,
-                    "chat_id": chat_id,
-                    "user_id": user_id,
-                    "guild_id": guild_id,
-                    "content": (
-                        "🧩 当前已有后台任务在执行。\n"
-                        f"{self._format_job_status(active_job)}\n\n"
-                        "你可以等待它完成，或者使用 /job_cancel 先中断当前任务。"
-                    ),
-                }))
-                return True
-            job = create_job(
-                workspace,
-                source=source,
+        if source == "discord" and self._should_start_background_job(text, attachments):
+            asyncio.create_task(self._start_discord_background_job(
+                text=text,
+                agent_id=agent_id,
                 chat_id=chat_id,
                 user_id=user_id,
-                title=self._derive_job_title(text),
-                user_request=text,
-            )
-            asyncio.create_task(self._send_reply({
-                "type": "reply",
-                "agent_id": agent_id,
-                "source": source,
-                    "chat_id": chat_id,
-                    "user_id": user_id,
-                    "guild_id": guild_id,
-                    "content": (
-                    "收到，已按后台任务接单处理。\n"
-                    f"- Job: {job.get('id')}\n"
-                    f"- Title: {job.get('title')}\n"
-                    "- 我会分步推进，期间你可以用 /job 查看进度，或用 /job_cancel 中断当前任务。"
-                ),
-            }))
+                guild_id=guild_id,
+                message_id=message_id,
+                metadata=metadata or {},
+            ))
             return True
 
         # Regular message — forward to agent
@@ -783,7 +930,7 @@ class Daemon:
         await self._send_reply(msg)
 
     async def _handle_job_result(self, msg: dict) -> None:
-        """Persist one background job step result and notify the original chat on completion."""
+        """Persist one background job step result and post progress into the Discord job thread."""
         agent_id = msg.get("agent_id", "default")
         workspace = (get_agent_config(self.config, agent_id) or {}).get("workspace", f"~/.sea_turtle/agents/{agent_id}")
         job_id = str(msg.get("job_id") or "").strip()
@@ -793,12 +940,13 @@ class Daemon:
 
         outcome = str(msg.get("outcome") or "runtime_error")
         started_at = str(msg.get("started_at") or "") or None
+        summary_text = str(msg.get("summary") or "").strip()
         if outcome == "success":
             report = msg.get("report") or {}
             job = apply_job_step_result(
                 workspace,
                 job_id,
-                summary=str(msg.get("summary") or "").strip(),
+                summary=summary_text,
                 output=str(msg.get("output") or "").strip(),
                 started_at=started_at,
                 phase_after=str(report.get("current_phase") or "").strip(),
@@ -825,6 +973,31 @@ class Daemon:
             )
         if not job:
             return
+        if job.get("source") == "discord":
+            thread_id = job.get("job_thread_id") or job.get("chat_id")
+            if thread_id:
+                await self._send_discord_reply(
+                    thread_id,
+                    "",
+                    agent_id,
+                    embed=self._build_job_step_embed(
+                        job,
+                        summary=summary_text if outcome == "success" else str(msg.get("error") or summary_text),
+                        output=str(msg.get("output") or "").strip(),
+                        outcome=outcome,
+                    ),
+                )
+            if job.get("status") in {"completed", "failed", "cancelled"}:
+                await self._send_discord_reply(
+                    job.get("summary_channel_id") or thread_id,
+                    str(job.get("result_summary") or job.get("progress_text") or "任务已结束。"),
+                    agent_id,
+                    embed=self._build_job_final_embed(job),
+                    attachments=[str(job.get("result_file"))] if str(job.get("result_file") or "").strip() else None,
+                    reference_message_id=job.get("summary_message_id"),
+                )
+            return
+
         if job.get("status") in {"completed", "failed", "cancelled"}:
             content = self._format_job_status(job)
             if job.get("status") == "completed":
@@ -887,6 +1060,7 @@ class Daemon:
                 payload["attachments"],
                 msg.get("message_id"),
                 payload.get("discord_reactions"),
+                msg.get("reference_message_id"),
             )
         elif source == "heartbeat":
             logger.debug(f"Heartbeat result for '{agent_id}': {payload['text'][:200]}")
@@ -1098,6 +1272,7 @@ class Daemon:
         attachments: list[str] | None = None,
         react_to_message_id: Any = None,
         reactions: list[str] | None = None,
+        reference_message_id: Any = None,
     ):
         """Send reply via Discord."""
         if self._discord_channel:
@@ -1112,6 +1287,7 @@ class Daemon:
                 attachments=attachments,
                 react_to_message_id=react_to_message_id,
                 reactions=reactions,
+                reference_message_id=reference_message_id,
             )
         else:
             logger.warning(f"Discord channel not available, cannot send reply to {chat_id}")
