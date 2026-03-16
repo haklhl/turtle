@@ -633,7 +633,7 @@ class DiscordChannel(BaseChannel):
                 raise RuntimeError("缺少在 thread 发言的权限（需要 Send Messages in Threads）。")
         message = await current_channel.fetch_message(int(message_id))
         thread_name = title.strip()[:90] or f"job-{message.id}"
-        thread = await message.create_thread(name=thread_name, auto_archive_duration=discord.ThreadArchiveDuration.one_day)
+        thread = await message.create_thread(name=thread_name, auto_archive_duration=1440)
         return {
             "thread_id": thread.id,
             "parent_channel_id": current_channel.id,
