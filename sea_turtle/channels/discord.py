@@ -140,6 +140,15 @@ class DiscordChannel(BaseChannel):
             "fields": fields,
         }
 
+    @staticmethod
+    def _summarize_message_snapshot(snapshot: Any) -> dict[str, Any]:
+        embeds = [DiscordChannel._summarize_embed(embed) for embed in (getattr(snapshot, "embeds", None) or [])[:2]]
+        return {
+            "created_at": getattr(snapshot, "created_at", None).isoformat() if getattr(snapshot, "created_at", None) else "",
+            "content_excerpt": (getattr(snapshot, "content", None) or "")[:1000],
+            "embeds": embeds,
+        }
+
     async def _extract_referenced_context(self, message: discord.Message, bot: commands.Bot) -> dict[str, Any] | None:
         reference = message.reference
         if not reference or not reference.message_id:
@@ -165,6 +174,10 @@ class DiscordChannel(BaseChannel):
             "created_at": referenced_message.created_at.isoformat() if referenced_message.created_at else "",
             "content_excerpt": (referenced_message.content or "")[:1000],
             "embeds": [self._summarize_embed(embed) for embed in (referenced_message.embeds or [])[:2]],
+            "message_snapshots": [
+                self._summarize_message_snapshot(snapshot)
+                for snapshot in (getattr(referenced_message, "message_snapshots", None) or [])[:2]
+            ],
             "note": "This is a truncated referenced-message summary, not the full original message. If you need the full content or surrounding context, fetch it by Discord message/channel tools.",
         }
 

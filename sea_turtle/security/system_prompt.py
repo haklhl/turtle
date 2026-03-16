@@ -261,6 +261,42 @@ def _build_discord_untrusted_context(discord_context: dict | None) -> str:
                         field_value = str(field.get("value") or "").strip()
                         if field_value:
                             lines.append(f"- Referenced Embed {index} {field_name}: {field_value}")
+        message_snapshots = referenced_message.get("message_snapshots")
+        if isinstance(message_snapshots, list):
+            for snapshot_index, snapshot in enumerate(message_snapshots[:2], start=1):
+                if not isinstance(snapshot, dict):
+                    continue
+                snapshot_created_at = str(snapshot.get("created_at") or "").strip()
+                snapshot_excerpt = str(snapshot.get("content_excerpt") or "").strip()
+                if snapshot_created_at:
+                    lines.append(f"- Referenced Snapshot {snapshot_index} Created At: {snapshot_created_at}")
+                if snapshot_excerpt:
+                    lines.append(f"- Referenced Snapshot {snapshot_index} Content Excerpt: {snapshot_excerpt}")
+                snapshot_embeds = snapshot.get("embeds")
+                if isinstance(snapshot_embeds, list):
+                    for embed_index, embed in enumerate(snapshot_embeds[:2], start=1):
+                        if not isinstance(embed, dict):
+                            continue
+                        title = str(embed.get("title") or "").strip()
+                        description = str(embed.get("description") or "").strip()
+                        lines.append(
+                            f"- Referenced Snapshot {snapshot_index} Embed {embed_index} Title: {title or 'n/a'}"
+                        )
+                        if description:
+                            lines.append(
+                                f"- Referenced Snapshot {snapshot_index} Embed {embed_index} Description: {description}"
+                            )
+                        fields = embed.get("fields")
+                        if isinstance(fields, list):
+                            for field_index, field in enumerate(fields[:3], start=1):
+                                if not isinstance(field, dict):
+                                    continue
+                                field_name = str(field.get("name") or "").strip() or f"Field {field_index}"
+                                field_value = str(field.get("value") or "").strip()
+                                if field_value:
+                                    lines.append(
+                                        f"- Referenced Snapshot {snapshot_index} Embed {embed_index} {field_name}: {field_value}"
+                                    )
         if note:
             lines.append(f"- Note: {note}")
 
