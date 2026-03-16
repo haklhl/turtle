@@ -193,6 +193,11 @@ def _next_job_id(jobs: list[dict[str, Any]]) -> str:
     return f"job-{max_index + 1}"
 
 
+def peek_next_job_id(workspace: str) -> str:
+    data = load_job_data(workspace)
+    return _next_job_id(data["jobs"])
+
+
 def list_recent_jobs(workspace: str, limit: int = 20) -> list[dict[str, Any]]:
     jobs = load_job_data(workspace)["jobs"]
     jobs.sort(key=lambda item: (item.get("updated_at") or "", item.get("created_at") or ""), reverse=True)

@@ -26,6 +26,7 @@ from sea_turtle.core.jobs import (
     list_job_runs,
     list_recent_jobs,
     mark_job_started,
+    peek_next_job_id,
     record_job_failure,
     request_job_cancel,
 )
@@ -182,6 +183,18 @@ class Daemon:
         return title or "后台任务"
 
     @staticmethod
+    def _derive_thread_title(job_id: str, text: str) -> str:
+        raw = Daemon._derive_job_title(text)
+        raw = raw.replace("\n", " ").strip()
+        concise = " ".join(raw.split())
+        if len(concise) > 64:
+            concise = concise[:63].rstrip() + "…"
+        title = f"{job_id} · {concise or '后台任务'}"
+        if len(title) > 90:
+            title = title[:89].rstrip() + "…"
+        return title
+
+    @staticmethod
     def _format_job_status(job: dict[str, Any]) -> str:
         if not job:
             return "🧩 当前没有后台任务。"
@@ -313,11 +326,12 @@ class Daemon:
             return
 
         try:
+            next_job_id = peek_next_job_id(workspace)
             thread_info = await self._discord_channel.ensure_job_thread(
                 agent_id=agent_id,
                 channel_id=chat_id,
                 message_id=message_id,
-                title=self._derive_job_title(text),
+                title=self._derive_thread_title(next_job_id, text),
                 metadata=metadata or {},
             )
         except Exception as e:
