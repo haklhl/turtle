@@ -4,6 +4,7 @@ import asyncio
 import datetime
 import logging
 import re
+from copy import deepcopy
 from pathlib import Path
 from typing import Any, TYPE_CHECKING
 
@@ -29,6 +30,16 @@ AGENT_DISCORD_COMMAND_REGISTRARS = {
 
 # Sensitive commands that require owner permission
 SENSITIVE_COMMANDS = {"/restart", "/reset", "/model", "/agent", "/prompt"}
+DISCORD_EMBED_LIMITS = {
+    "title": 256,
+    "description": 4096,
+    "field_name": 256,
+    "field_value": 1024,
+    "fields": 25,
+    "footer_text": 2048,
+    "author_name": 256,
+    "total": 6000,
+}
 
 SYS_COMMAND_TITLES = {
     "/start": "欢迎",
@@ -409,14 +420,15 @@ class DiscordChannel(BaseChannel):
         react_to_message_id: Any = None,
         reactions: list[str] | None = None,
         reference_message_id: Any = None,
-    ) -> None:
+    ) -> bool:
         """Send a message to a Discord channel, optionally with embeds/files."""
         try:
             view = None
             message_text = text
-            embed_objs = [discord.Embed.from_dict(item) for item in embeds or [] if isinstance(item, dict)]
+            sanitized_embeds = _sanitize_embed_payloads(embeds or ([] if embed is None else [embed]))
+            embed_objs = [discord.Embed.from_dict(item) for item in sanitized_embeds]
             if not embed_objs and embed:
-                embed_objs = [discord.Embed.from_dict(embed)]
+                embed_objs = [discord.Embed.from_dict(item) for item in sanitized_embeds]
             poll_obj = None
             if isinstance(poll, dict):
                 poll_obj = _build_discord_poll(poll)
@@ -484,8 +496,10 @@ class DiscordChannel(BaseChannel):
                         await target.add_reaction(emoji)
                     except Exception as e:
                         logger.warning(f"Failed to add Discord reaction {emoji!r}: {e}")
+            return True
         except Exception as e:
             logger.error(f"Failed to send Discord message: {e}")
+            return False
 
     async def _respond_system_slash(
         self,
@@ -493,7 +507,7 @@ class DiscordChannel(BaseChannel):
         *,
         agent_id: str,
         command: str,
-    ) -> None:
+    ) -> bool:
         reply = await self.daemon.handle_system_command(
             command=command,
             agent_id=agent_id,
@@ -533,7 +547,7 @@ class DiscordChannel(BaseChannel):
         try:
             channel = bot.get_channel(int(chat_id))
             if channel:
-                await self._send_discord_message(
+                return await self._send_discord_message(
                     channel,
                     text,
                     agent_id=agent_id,
@@ -548,6 +562,7 @@ class DiscordChannel(BaseChannel):
                 )
         except Exception as e:
             logger.error(f"Failed to send Discord message to {chat_id}: {e}")
+        return False
 
     async def _get_channel(self, bot: commands.Bot, channel_id: int | str):
         try:
@@ -592,7 +607,14 @@ class DiscordChannel(BaseChannel):
         bot = self.bots[agent_id]
         current_channel = await self._get_channel(bot, channel_id)
         metadata = metadata or {}
+        me = None
+        if getattr(current_channel, "guild", None) and bot.user:
+            me = current_channel.guild.get_member(bot.user.id)
         if bool(metadata.get("is_thread")) and isinstance(current_channel, discord.Thread):
+            if me is not None:
+                perms = current_channel.permissions_for(me)
+                if not perms.send_messages_in_threads:
+                    raise RuntimeError("缺少在当前 thread 发言的权限（需要 Send Messages in Threads）。")
             return {
                 "thread_id": current_channel.id,
                 "parent_channel_id": getattr(current_channel.parent, "id", None),
@@ -603,6 +625,12 @@ class DiscordChannel(BaseChannel):
 
         if not isinstance(current_channel, (discord.TextChannel, discord.ForumChannel)):
             raise RuntimeError("Discord job thread can only be created from a guild text/forum channel message.")
+        if me is not None:
+            perms = current_channel.permissions_for(me)
+            if not perms.create_public_threads:
+                raise RuntimeError("缺少创建公开 thread 的权限（需要 Create Public Threads）。")
+            if not perms.send_messages_in_threads:
+                raise RuntimeError("缺少在 thread 发言的权限（需要 Send Messages in Threads）。")
         message = await current_channel.fetch_message(int(message_id))
         thread_name = title.strip()[:90] or f"job-{message.id}"
         thread = await message.create_thread(name=thread_name, auto_archive_duration=discord.ThreadArchiveDuration.one_day)
@@ -651,6 +679,82 @@ def _build_discord_poll(spec: dict[str, Any]) -> discord.Poll:
     if len(poll.answers) < 2:
         raise ValueError("Discord poll requires at least two valid answers")
     return poll
+
+
+def _take_embed_budget(text: str, limit: int, remaining: int) -> tuple[str, int]:
+    if remaining <= 0:
+        return "", 0
+    cleaned = str(text or "")
+    allowed = min(limit, remaining)
+    if len(cleaned) > allowed:
+        cleaned = cleaned[: max(0, allowed - 1)] + "…" if allowed > 0 else ""
+    return cleaned, remaining - len(cleaned)
+
+
+def _sanitize_embed_payloads(payloads: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    remaining = DISCORD_EMBED_LIMITS["total"]
+    sanitized: list[dict[str, Any]] = []
+    for raw in payloads[:10]:
+        if not isinstance(raw, dict):
+            continue
+        item = deepcopy(raw)
+        embed: dict[str, Any] = {}
+
+        title, remaining = _take_embed_budget(item.get("title", ""), DISCORD_EMBED_LIMITS["title"], remaining)
+        if title:
+            embed["title"] = title
+
+        description, remaining = _take_embed_budget(item.get("description", ""), DISCORD_EMBED_LIMITS["description"], remaining)
+        if description:
+            embed["description"] = description
+
+        if isinstance(item.get("author"), dict):
+            author = dict(item["author"])
+            author_name, remaining = _take_embed_budget(author.get("name", ""), DISCORD_EMBED_LIMITS["author_name"], remaining)
+            if author_name:
+                author["name"] = author_name
+            else:
+                author.pop("name", None)
+            if author:
+                embed["author"] = author
+
+        if isinstance(item.get("footer"), dict):
+            footer = dict(item["footer"])
+            footer_text, remaining = _take_embed_budget(footer.get("text", ""), DISCORD_EMBED_LIMITS["footer_text"], remaining)
+            if footer_text:
+                footer["text"] = footer_text
+            else:
+                footer.pop("text", None)
+            if footer:
+                embed["footer"] = footer
+
+        fields: list[dict[str, Any]] = []
+        for field in item.get("fields", [])[: DISCORD_EMBED_LIMITS["fields"]]:
+            if not isinstance(field, dict):
+                continue
+            name, remaining = _take_embed_budget(field.get("name", ""), DISCORD_EMBED_LIMITS["field_name"], remaining)
+            value, remaining = _take_embed_budget(field.get("value", ""), DISCORD_EMBED_LIMITS["field_value"], remaining)
+            if not name and not value:
+                continue
+            fields.append({
+                "name": name or "Value",
+                "value": value or "n/a",
+                "inline": bool(field.get("inline", False)),
+            })
+            if remaining <= 0:
+                break
+        if fields:
+            embed["fields"] = fields
+
+        for passthrough_key in ("color", "url", "timestamp", "thumbnail", "image"):
+            if passthrough_key in item:
+                embed[passthrough_key] = item[passthrough_key]
+
+        if embed:
+            sanitized.append(embed)
+        if remaining <= 0:
+            break
+    return sanitized
 
 
 def _build_system_command_response(command: str, reply: str) -> tuple[str, discord.Embed | None, list[discord.File]]:

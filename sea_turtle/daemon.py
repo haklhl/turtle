@@ -349,12 +349,21 @@ class Daemon:
             user_request=text,
         )
 
-        await self._send_discord_reply(
+        thread_ready = await self._send_discord_reply(
             thread_id,
             "",
             agent_id,
             embed=self._build_job_start_embed(job, thread_id),
         )
+        if not thread_ready:
+            request_job_cancel(workspace, str(job.get("id") or ""))
+            await self._send_discord_reply(
+                thread_info.get("summary_channel_id") or chat_id,
+                "❌ 任务 thread 已创建，但我无法在该 thread 中发消息，所以这次后台任务已取消。请检查该 bot 是否具备 Send Messages in Threads 权限。",
+                agent_id,
+                reference_message_id=thread_info.get("summary_message_id") or message_id,
+            )
+            return
         await self._send_discord_reply(
             thread_info.get("summary_channel_id") or chat_id,
             f"已创建后台任务线程 <#{thread_id}>，我会在子区分步推进。",
@@ -988,9 +997,12 @@ class Daemon:
                     ),
                 )
             if job.get("status") in {"completed", "failed", "cancelled"}:
+                final_summary = str(job.get("result_summary") or job.get("progress_text") or "任务已结束。").strip()
+                if thread_id:
+                    final_summary = f"{final_summary}\n线程：<#{thread_id}>"
                 await self._send_discord_reply(
                     job.get("summary_channel_id") or thread_id,
-                    str(job.get("result_summary") or job.get("progress_text") or "任务已结束。"),
+                    final_summary,
                     agent_id,
                     embed=self._build_job_final_embed(job),
                     attachments=[str(job.get("result_file"))] if str(job.get("result_file") or "").strip() else None,
@@ -1273,10 +1285,10 @@ class Daemon:
         react_to_message_id: Any = None,
         reactions: list[str] | None = None,
         reference_message_id: Any = None,
-    ):
+    ) -> bool:
         """Send reply via Discord."""
         if self._discord_channel:
-            await self._discord_channel.send_message(
+            return await self._discord_channel.send_message(
                 chat_id,
                 content,
                 agent_id,
@@ -1291,6 +1303,7 @@ class Daemon:
             )
         else:
             logger.warning(f"Discord channel not available, cannot send reply to {chat_id}")
+            return False
 
     def _telegram_owner_ids(self, agent_id: str) -> list[int]:
         agent_cfg = get_agent_config(self.config, agent_id) or {}
