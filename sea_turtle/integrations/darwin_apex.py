@@ -670,6 +670,11 @@ def last_iter_embeds(bundle: dict[str, Any]) -> list[dict[str, Any]]:
     quality_text = f"{quality:.2f}" if isinstance(quality, (int, float)) else "n/a"
     commit_message = proposal.get("commit_message") or decision_summary.get("commit_message") or "n/a"
     apply_gate = decision_summary.get("apply_gate") or "n/a"
+    focus_mode_name = str(focus_mode.get("mode") or "").strip().lower()
+    strategy_mode_name = str(strategy.get("mode") or "").strip().lower()
+    profit_push_active = "profit_push" in {focus_mode_name, strategy_mode_name}
+    detail_color = 0x2ECC71 if profit_push_active else 0x34495E
+    summary_color = 0x27AE60 if profit_push_active else 0x16A085
     embeds = [
         {
             "title": "角都 最近一轮迭代",
@@ -688,7 +693,7 @@ def last_iter_embeds(bundle: dict[str, Any]) -> list[dict[str, Any]]:
         },
         {
             "title": "角都 迭代细节",
-            "color": 0x34495E,
+            "color": detail_color,
             "fields": [
                 _field("Proposal", proposal.get("proposal_title") or decision_summary.get("proposal_title") or "n/a", inline=False),
                 _field("Commit", commit_message, inline=False),
@@ -716,7 +721,7 @@ def last_iter_embeds(bundle: dict[str, Any]) -> list[dict[str, Any]]:
         embeds.append(
             {
                 "title": "角都 迭代摘要" if index == 1 else f"角都 迭代摘要 {index}",
-                "color": 0x16A085,
+                "color": summary_color,
                 "description": chunk,
             }
         )
